@@ -32,6 +32,14 @@ from uuid import uuid4
 
 _ROUTING_NUMBER_RE = re.compile(r"^\d{9}$")
 _POSTAL_CODE_RE = re.compile(r"^(?:\d{5}|\d{9}|\d{5}-\d{4})$")
+_BANK_DETAIL_FIELDS = (
+    "routing_number",
+    "bank_name",
+    "bank_address",
+    "city",
+    "state",
+    "postal_code",
+)
 _US_STATE_CODES = {
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
     "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
@@ -113,7 +121,17 @@ def _validate_status(value: AccountStatus | str) -> AccountStatus:
         raise ValidationError("status must be active, inactive, or suspended") from exc
 
 
-def _validate_balance(value: Decimal | int | float | str) -> Decimal:
+def _normalize_bank_details(updates: dict[str, Any]) -> dict[str, str | None]:
+    return {
+        field_name: _validate_optional_string(field_name, updates[field_name])
+        for field_name in _BANK_DETAIL_FIELDS
+        if field_name in updates
+    }
+
+
+def _validate_balance(value: Decimal | int | str) -> Decimal:
+    if isinstance(value, float):
+        raise ValidationError("money values must be provided as Decimal, int, or string")
     try:
         amount = Decimal(str(value)).quantize(Decimal("0.01"))
     except (InvalidOperation, ValueError) as exc:
@@ -159,7 +177,7 @@ class BankAccountStore:
         user_id: str,
         account_number: str,
         account_type: str,
-        balance: Decimal | int | float | str = Decimal("0.00"),
+        balance: Decimal | int | str = Decimal("0.00"),
         status: AccountStatus | str = AccountStatus.ACTIVE,
         routing_number: str | None = None,
         bank_name: str | None = None,
@@ -176,18 +194,23 @@ class BankAccountStore:
             if account_key in self._accounts:
                 raise ValidationError("account already exists for this user")
 
+            bank_details = _normalize_bank_details(
+                {
+                    "routing_number": routing_number,
+                    "bank_name": bank_name,
+                    "bank_address": bank_address,
+                    "city": city,
+                    "state": state,
+                    "postal_code": postal_code,
+                }
+            )
             account = BankAccount(
                 user_id=user_id,
                 account_number=account_number,
                 account_type=account_type,
                 balance=_validate_balance(balance),
                 status=_validate_status(status),
-                routing_number=_validate_optional_string("routing_number", routing_number),
-                bank_name=_validate_optional_string("bank_name", bank_name),
-                bank_address=_validate_optional_string("bank_address", bank_address),
-                city=_validate_optional_string("city", city),
-                state=_validate_optional_string("state", state),
-                postal_code=_validate_optional_string("postal_code", postal_code),
+                **bank_details,
             )
             self._accounts[account_key] = account
             self._transactions[account_key] = []
@@ -217,12 +240,7 @@ class BankAccountStore:
         supported_fields = {
             "account_type",
             "status",
-            "routing_number",
-            "bank_name",
-            "bank_address",
-            "city",
-            "state",
-            "postal_code",
+            *_BANK_DETAIL_FIELDS,
         }
         unknown_fields = set(updates) - supported_fields
         if unknown_fields:
@@ -238,12 +256,7 @@ class BankAccountStore:
         if "status" in updates:
             normalized_updates["status"] = _validate_status(updates["status"])
 
-        for field_name in supported_fields - {"account_type", "status"}:
-            if field_name in updates:
-                normalized_updates[field_name] = _validate_optional_string(
-                    field_name,
-                    updates[field_name],
-                )
+        normalized_updates.update(_normalize_bank_details(updates))
 
         account_key = (
             _validate_required_string("user_id", user_id),
@@ -259,7 +272,7 @@ class BankAccountStore:
         self,
         user_id: str,
         account_number: str,
-        amount: Decimal | int | float | str,
+        amount: Decimal | int | str,
         transaction_type: str,
     ) -> AccountTransaction:
         transaction_type = _validate_required_string("transaction_type", transaction_type).lower()

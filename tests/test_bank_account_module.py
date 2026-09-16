@@ -24,7 +24,7 @@ class BankAccountStoreTests(unittest.TestCase):
             bank_name="Live Build Bank",
             bank_address="742 Evergreen Terrace, Springfield, IL 62704, USA",
             city="Springfield",
-            state="IL",
+            state="il",
             postal_code="62704",
         )
 
@@ -95,6 +95,7 @@ class BankAccountStoreTests(unittest.TestCase):
         self.assertEqual(payload["account"]["bank_name"], "Live Build Bank")
         self.assertEqual(payload["account"]["postal_code"], "62704-0001")
         self.assertEqual(payload["account"]["status"], "suspended")
+        self.assertEqual(payload["account"]["state"], "IL")
 
     def test_invalid_bank_details_raise_validation_error(self) -> None:
         invalid_cases = [
@@ -156,6 +157,17 @@ class BankAccountStoreTests(unittest.TestCase):
 
         with self.assertRaises(ValidationError):
             self.store.add_transaction("user-123", "000123456784", "1.00", "deposit")
+
+    def test_float_money_values_are_rejected(self) -> None:
+        self.store.create_account(
+            user_id="user-123",
+            account_number="000123456785",
+            account_type="checking",
+            balance="10.00",
+        )
+
+        with self.assertRaises(ValidationError):
+            self.store.add_transaction("user-123", "000123456785", 1.25, "deposit")
 
 
 if __name__ == "__main__":
