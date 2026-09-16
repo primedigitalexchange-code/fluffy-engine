@@ -145,6 +145,18 @@ class BankAccountStoreTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             self.store.add_transaction("user-123", "000123456783", "15.00", "withdrawal")
 
+    def test_inactive_account_cannot_accept_transactions(self) -> None:
+        self.store.create_account(
+            user_id="user-123",
+            account_number="000123456784",
+            account_type="checking",
+            status=AccountStatus.INACTIVE,
+            balance="10.00",
+        )
+
+        with self.assertRaises(ValidationError):
+            self.store.add_transaction("user-123", "000123456784", "1.00", "deposit")
+
 
 if __name__ == "__main__":
     unittest.main()

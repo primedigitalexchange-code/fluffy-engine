@@ -276,6 +276,8 @@ class BankAccountStore:
         )
         with self._lock:
             account = self._get_account_unlocked(account_key)
+            if account.status is not AccountStatus.ACTIVE:
+                raise ValidationError("account must be active to process transactions")
             new_balance = account.balance + amount_decimal
             if transaction_type == "withdrawal":
                 new_balance = account.balance - amount_decimal
