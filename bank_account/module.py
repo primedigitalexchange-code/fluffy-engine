@@ -252,7 +252,7 @@ class BankAccountStore:
         with self._lock:
             account = self._get_account_unlocked(account_key)
             updated_account = replace(account, **normalized_updates)
-            self._accounts[(updated_account.user_id, updated_account.account_number)] = updated_account
+            self._accounts[account_key] = updated_account
             return updated_account
 
     def add_transaction(
