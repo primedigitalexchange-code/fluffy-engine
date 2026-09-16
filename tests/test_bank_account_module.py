@@ -73,6 +73,16 @@ class BankAccountStoreTests(unittest.TestCase):
         balance = self.store.get_balance_status("user-1", "123456789012")
         self.assertEqual(balance, {"balance": "300.00", "status": "active"})
 
+    def test_suspended_account_rejects_transactions(self) -> None:
+        self.store.update_account("user-1", "123456789012", status="suspended")
+        with self.assertRaises(ValidationError):
+            self.store.add_transaction(
+                "user-1",
+                "123456789012",
+                amount="10.00",
+                transaction_type="credit",
+            )
+
     def test_debit_cannot_overdraw_account(self) -> None:
         with self.assertRaises(ValidationError):
             self.store.add_transaction(
@@ -108,9 +118,13 @@ class BankAccountEndpointTests(unittest.TestCase):
 
         account = retrieve_account(store, "user-3", "123456789015")
         self.assertEqual(account["account_number"], "123456789015")
+        self.assertEqual(account["balance"], "99.00")
+        self.assertEqual(account["status"], "active")
 
         listing = list_user_accounts(store, "user-3")
         self.assertEqual(len(listing), 1)
+        self.assertEqual(listing[0]["balance"], "99.00")
+        self.assertEqual(listing[0]["status"], "active")
 
         updated = update_account(
             store,

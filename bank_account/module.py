@@ -36,10 +36,6 @@ class ValidationError(ValueError):
     """Raised when account input data is invalid."""
 
 
-class SecurityError(PermissionError):
-    """Raised when a user tries to access an account they do not own."""
-
-
 class NotFoundError(LookupError):
     """Raised when an account cannot be found."""
 
@@ -219,7 +215,7 @@ class BankAccountStore:
         if isinstance(value, Decimal):
             return value
         try:
-            return Decimal(value)
+            return Decimal(str(value))
         except (InvalidOperation, TypeError) as error:
             raise ValidationError(f"{field_name} must be a valid decimal value") from error
 
