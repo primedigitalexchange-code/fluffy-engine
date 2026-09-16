@@ -159,15 +159,34 @@ class BankAccountStoreTests(unittest.TestCase):
             self.store.add_transaction("user-123", "000123456784", "1.00", "deposit")
 
     def test_float_money_values_are_rejected(self) -> None:
+        with self.assertRaises(ValidationError):
+            self.store.create_account(
+                user_id="user-123",
+                account_number="000123456785",
+                account_type="checking",
+                balance=10.25,
+            )
+
         self.store.create_account(
             user_id="user-123",
-            account_number="000123456785",
+            account_number="000123456786",
             account_type="checking",
             balance="10.00",
         )
 
         with self.assertRaises(ValidationError):
-            self.store.add_transaction("user-123", "000123456785", 1.25, "deposit")
+            self.store.add_transaction("user-123", "000123456786", 1.25, "deposit")
+
+    def test_non_finite_money_values_are_rejected(self) -> None:
+        self.store.create_account(
+            user_id="user-123",
+            account_number="000123456787",
+            account_type="checking",
+            balance="10.00",
+        )
+
+        with self.assertRaises(ValidationError):
+            self.store.add_transaction("user-123", "000123456787", "NaN", "deposit")
 
 
 if __name__ == "__main__":

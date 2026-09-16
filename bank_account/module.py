@@ -133,9 +133,12 @@ def _validate_balance(value: Decimal | int | str) -> Decimal:
     if isinstance(value, float):
         raise ValidationError("money values must be provided as Decimal, int, or string")
     try:
-        amount = Decimal(str(value)).quantize(Decimal("0.01"))
+        amount = Decimal(str(value))
     except (InvalidOperation, ValueError) as exc:
         raise ValidationError("balance must be a valid decimal amount") from exc
+    if not amount.is_finite():
+        raise ValidationError("balance must be a finite decimal amount")
+    amount = amount.quantize(Decimal("0.01"))
     if amount < Decimal("0.00"):
         raise ValidationError("balance must be greater than or equal to 0")
     return amount
@@ -289,7 +292,7 @@ class BankAccountStore:
         )
         with self._lock:
             account = self._get_account_unlocked(account_key)
-            if account.status is not AccountStatus.ACTIVE:
+            if account.status != AccountStatus.ACTIVE:
                 raise ValidationError("account must be active to process transactions")
             new_balance = account.balance + amount_decimal
             if transaction_type == "withdrawal":
