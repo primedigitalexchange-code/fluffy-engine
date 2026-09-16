@@ -72,6 +72,10 @@ class BankAccountStoreTests(unittest.TestCase):
         )
         balance = self.store.get_balance_status("user-1", "123456789012")
         self.assertEqual(balance, {"balance": "300.00", "status": "active"})
+        transactions = self.store.list_transactions("user-1", "123456789012")
+        self.assertEqual(len(transactions), 1)
+        self.assertEqual(transactions[0].transaction_type, "credit")
+        self.assertEqual(transactions[0].amount, Decimal("50.00"))
 
     def test_suspended_account_rejects_transactions(self) -> None:
         self.store.update_account("user-1", "123456789012", status="suspended")
@@ -102,6 +106,21 @@ class BankAccountStoreTests(unittest.TestCase):
                     balance=Decimal("10.00"),
                 )
             )
+
+    def test_rejects_duplicate_account_number_across_users(self) -> None:
+        with self.assertRaises(ValidationError):
+            self.store.create_account(
+                BankAccount(
+                    user_id="user-3",
+                    account_number="123456789012",
+                    account_type="checking",
+                    balance=Decimal("10.00"),
+                )
+            )
+
+    def test_list_accounts_rejects_blank_user_id(self) -> None:
+        with self.assertRaises(ValidationError):
+            self.store.list_accounts("   ")
 
 
 class BankAccountEndpointTests(unittest.TestCase):

@@ -80,6 +80,11 @@ class BankAccountStore:
     def create_account(self, account: BankAccount) -> BankAccount:
         """Create and store a new account after validation."""
         self._validate_account(account)
+        if any(
+            account.account_number in user_accounts
+            for user_accounts in self._accounts.values()
+        ):
+            raise ValidationError("account_number must be globally unique")
         user_accounts = self._accounts.setdefault(account.user_id, {})
         if account.account_number in user_accounts:
             raise ValidationError("Account already exists for this user")
@@ -89,7 +94,7 @@ class BankAccountStore:
 
     def list_accounts(self, user_id: str) -> list[BankAccount]:
         """List all accounts for a user."""
-        if not user_id:
+        if not user_id.strip():
             raise ValidationError("user_id is required")
         return list(self._accounts.get(user_id, {}).values())
 
