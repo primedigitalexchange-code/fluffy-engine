@@ -107,12 +107,12 @@ class BankAccountStoreTests(unittest.TestCase):
             {"postal_code": "6270A"},
         ]
 
-        for updates in invalid_cases:
+        for index, updates in enumerate(invalid_cases, start=1):
             with self.subTest(updates=updates):
                 with self.assertRaises(ValidationError):
                     self.store.create_account(
                         user_id="user-123",
-                        account_number=f"acct-{len(updates)}-{next(iter(updates.items()))[1]}",
+                        account_number=f"invalid-account-{index}",
                         account_type="checking",
                         **updates,
                     )
