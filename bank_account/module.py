@@ -219,8 +219,10 @@ class BankAccountStore:
     def _to_decimal(value: Decimal | str, *, field_name: str) -> Decimal:
         if isinstance(value, Decimal):
             return value
+        if not isinstance(value, str):
+            raise ValidationError(f"{field_name} must be provided as a decimal string")
         try:
-            return Decimal(str(value))
+            return Decimal(value)
         except (InvalidOperation, TypeError) as error:
             raise ValidationError(f"{field_name} must be a valid decimal value") from error
 

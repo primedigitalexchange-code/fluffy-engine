@@ -165,6 +165,25 @@ class BankAccountEndpointTests(unittest.TestCase):
         balance_status = get_account_balance_status(store, "user-3", "123456789015")
         self.assertEqual(balance_status, {"balance": "99.00", "status": "inactive"})
 
+    def test_update_endpoint_rejects_invalid_status(self) -> None:
+        store = BankAccountStore()
+        store.create_account(
+            BankAccount(
+                user_id="user-3",
+                account_number="123456789016",
+                account_type="checking",
+                balance=Decimal("10.00"),
+            )
+        )
+
+        with self.assertRaises(ValidationError):
+            update_account(
+                store,
+                "user-3",
+                "123456789016",
+                {"status": "paused"},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
