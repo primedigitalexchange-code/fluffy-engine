@@ -220,6 +220,8 @@ class BankAccountStore:
     @staticmethod
     def _to_decimal(value: Decimal | str, *, field_name: str) -> Decimal:
         if isinstance(value, Decimal):
+            if value != value.quantize(CURRENCY_SCALE):
+                raise ValidationError(f"{field_name} must use two decimal places")
             return value
         if not isinstance(value, str):
             raise ValidationError(f"{field_name} must be provided as a decimal string")

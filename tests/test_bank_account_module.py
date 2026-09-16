@@ -113,6 +113,13 @@ class BankAccountStoreTests(unittest.TestCase):
                 amount="10.999",
                 transaction_type="credit",
             )
+        with self.assertRaises(ValidationError):
+            self.store.add_transaction(
+                "user-1",
+                "123456789012",
+                amount=Decimal("10.999"),
+                transaction_type="credit",
+            )
 
     def test_invalid_account_data_raises_validation_error(self) -> None:
         with self.assertRaises(ValidationError):
