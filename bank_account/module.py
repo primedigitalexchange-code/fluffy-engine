@@ -138,7 +138,10 @@ def _validate_balance(value: Decimal | int | str) -> Decimal:
         raise ValidationError("balance must be a valid decimal amount") from exc
     if not amount.is_finite():
         raise ValidationError("balance must be a finite decimal amount")
-    amount = amount.quantize(Decimal("0.01"))
+    quantized_amount = amount.quantize(Decimal("0.01"))
+    if quantized_amount != amount:
+        raise ValidationError("money values must have no more than 2 decimal places")
+    amount = quantized_amount
     if amount < Decimal("0.00"):
         raise ValidationError("balance must be greater than or equal to 0")
     return amount

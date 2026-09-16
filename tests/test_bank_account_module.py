@@ -188,6 +188,25 @@ class BankAccountStoreTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             self.store.add_transaction("user-123", "000123456787", "NaN", "deposit")
 
+    def test_money_values_with_more_than_two_decimal_places_are_rejected(self) -> None:
+        with self.assertRaises(ValidationError):
+            self.store.create_account(
+                user_id="user-123",
+                account_number="000123456788",
+                account_type="checking",
+                balance="10.999",
+            )
+
+        self.store.create_account(
+            user_id="user-123",
+            account_number="000123456789",
+            account_type="checking",
+            balance="10.00",
+        )
+
+        with self.assertRaises(ValidationError):
+            self.store.add_transaction("user-123", "000123456789", "1.999", "deposit")
+
 
 if __name__ == "__main__":
     unittest.main()
