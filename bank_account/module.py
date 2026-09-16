@@ -31,6 +31,8 @@ from decimal import Decimal, InvalidOperation
 from enum import Enum
 from uuid import uuid4
 
+CURRENCY_SCALE = Decimal("0.01")
+
 
 class ValidationError(ValueError):
     """Raised when account input data is invalid."""
@@ -86,8 +88,6 @@ class BankAccountStore:
         ):
             raise ValidationError("account_number must be globally unique")
         user_accounts = self._accounts.setdefault(account.user_id, {})
-        if account.account_number in user_accounts:
-            raise ValidationError("Account already exists for this user")
         user_accounts[account.account_number] = account
         self._transactions.setdefault(account.account_number, [])
         return account
@@ -207,6 +207,8 @@ class BankAccountStore:
             raise ValidationError("account_number must be 10-18 digits")
         if account.balance < Decimal("0"):
             raise ValidationError("balance cannot be negative")
+        if account.balance != account.balance.quantize(CURRENCY_SCALE):
+            raise ValidationError("balance must use two decimal places")
 
     @staticmethod
     def _validate_user_and_account_number(user_id: str, account_number: str) -> None:
@@ -222,9 +224,12 @@ class BankAccountStore:
         if not isinstance(value, str):
             raise ValidationError(f"{field_name} must be provided as a decimal string")
         try:
-            return Decimal(value)
+            decimal_value = Decimal(value)
         except (InvalidOperation, TypeError) as error:
             raise ValidationError(f"{field_name} must be a valid decimal value") from error
+        if decimal_value != decimal_value.quantize(CURRENCY_SCALE):
+            raise ValidationError(f"{field_name} must use two decimal places")
+        return decimal_value
 
 
 def retrieve_account(store: BankAccountStore, user_id: str, account_number: str) -> dict[str, str]:

@@ -105,6 +105,15 @@ class BankAccountStoreTests(unittest.TestCase):
                 transaction_type="debit",
             )
 
+    def test_transaction_amount_requires_two_decimal_places(self) -> None:
+        with self.assertRaises(ValidationError):
+            self.store.add_transaction(
+                "user-1",
+                "123456789012",
+                amount="10.999",
+                transaction_type="credit",
+            )
+
     def test_invalid_account_data_raises_validation_error(self) -> None:
         with self.assertRaises(ValidationError):
             self.store.create_account(
