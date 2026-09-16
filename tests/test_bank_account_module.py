@@ -87,6 +87,15 @@ class BankAccountStoreTests(unittest.TestCase):
                 transaction_type="credit",
             )
 
+    def test_inactive_account_rejects_transactions(self) -> None:
+        with self.assertRaises(ValidationError):
+            self.store.add_transaction(
+                "user-1",
+                "123456789013",
+                amount="10.00",
+                transaction_type="credit",
+            )
+
     def test_debit_cannot_overdraw_account(self) -> None:
         with self.assertRaises(ValidationError):
             self.store.add_transaction(

@@ -154,8 +154,8 @@ class BankAccountStore:
     ) -> AccountTransaction:
         """Record a transaction and update account balance."""
         account = self.get_account(user_id, account_number)
-        if account.status == AccountStatus.SUSPENDED:
-            raise ValidationError("Cannot transact on suspended account")
+        if account.status != AccountStatus.ACTIVE:
+            raise ValidationError("Cannot transact on non-active account")
 
         normalized_amount = self._to_decimal(amount, field_name="amount")
         if normalized_amount <= Decimal("0"):
