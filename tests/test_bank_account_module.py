@@ -55,6 +55,23 @@ class BankAccountStoreTests(unittest.TestCase):
         self.assertIsNone(account.bank_name)
         self.assertEqual(list_user_accounts(self.store, "user-123")["accounts"][0]["account_number"], "000123456780")
 
+    def test_list_accounts_is_sorted_by_account_number(self) -> None:
+        self.store.create_account(
+            user_id="user-123",
+            account_number="000123456790",
+            account_type="checking",
+        )
+        self.store.create_account(
+            user_id="user-123",
+            account_number="000123456788",
+            account_type="savings",
+        )
+
+        self.assertEqual(
+            [account["account_number"] for account in list_user_accounts(self.store, "user-123")["accounts"]],
+            ["000123456788", "000123456790"],
+        )
+
     def test_update_account_supports_bank_details(self) -> None:
         self.store.create_account(
             user_id="user-123",
