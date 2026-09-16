@@ -147,6 +147,12 @@ class BankAccountStore:
         self._accounts: dict[tuple[str, str], BankAccount] = {}
         self._transactions: dict[tuple[str, str], list[AccountTransaction]] = {}
 
+    def _get_account_unlocked(self, account_key: tuple[str, str]) -> BankAccount:
+        try:
+            return self._accounts[account_key]
+        except KeyError as exc:
+            raise NotFoundError("account not found") from exc
+
     def create_account(
         self,
         *,
@@ -205,10 +211,7 @@ class BankAccountStore:
             _validate_required_string("account_number", account_number),
         )
         with self._lock:
-            try:
-                return self._accounts[account_key]
-            except KeyError as exc:
-                raise NotFoundError("account not found") from exc
+            return self._get_account_unlocked(account_key)
 
     def update_account(self, user_id: str, account_number: str, **updates: Any) -> BankAccount:
         supported_fields = {
@@ -242,8 +245,12 @@ class BankAccountStore:
                     updates[field_name],
                 )
 
+        account_key = (
+            _validate_required_string("user_id", user_id),
+            _validate_required_string("account_number", account_number),
+        )
         with self._lock:
-            account = self.get_account(user_id, account_number)
+            account = self._get_account_unlocked(account_key)
             updated_account = replace(account, **normalized_updates)
             self._accounts[(updated_account.user_id, updated_account.account_number)] = updated_account
             return updated_account
@@ -263,8 +270,12 @@ class BankAccountStore:
         if amount_decimal == Decimal("0.00"):
             raise ValidationError("transaction amount must be greater than 0")
 
+        account_key = (
+            _validate_required_string("user_id", user_id),
+            _validate_required_string("account_number", account_number),
+        )
         with self._lock:
-            account = self.get_account(user_id, account_number)
+            account = self._get_account_unlocked(account_key)
             new_balance = account.balance + amount_decimal
             if transaction_type == "withdrawal":
                 new_balance = account.balance - amount_decimal
@@ -272,7 +283,6 @@ class BankAccountStore:
                     raise ValidationError("insufficient funds")
 
             updated_account = replace(account, balance=new_balance)
-            account_key = (updated_account.user_id, updated_account.account_number)
             self._accounts[account_key] = updated_account
 
             transaction = AccountTransaction(
@@ -286,8 +296,12 @@ class BankAccountStore:
             return transaction
 
     def list_transactions(self, user_id: str, account_number: str) -> list[AccountTransaction]:
+        account_key = (
+            _validate_required_string("user_id", user_id),
+            _validate_required_string("account_number", account_number),
+        )
         with self._lock:
-            account = self.get_account(user_id, account_number)
+            account = self._get_account_unlocked(account_key)
             return list(self._transactions[(account.user_id, account.account_number)])
 
     def get_balance_status(self, user_id: str, account_number: str) -> dict[str, str]:
