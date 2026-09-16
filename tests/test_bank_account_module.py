@@ -5,7 +5,7 @@ from bank_account.module import (
     AccountStatus,
     BankAccount,
     BankAccountStore,
-    SecurityError,
+    NotFoundError,
     ValidationError,
     get_account_balance_status,
     list_user_accounts,
@@ -49,8 +49,8 @@ class BankAccountStoreTests(unittest.TestCase):
         account = self.store.get_account("user-1", "123456789013")
         self.assertEqual(account.status, AccountStatus.INACTIVE)
 
-    def test_security_check_blocks_cross_user_account_access(self) -> None:
-        with self.assertRaises(SecurityError):
+    def test_security_check_hides_cross_user_account_access(self) -> None:
+        with self.assertRaises(NotFoundError):
             self.store.get_account("user-1", "123456789014")
 
     def test_update_account_details_and_status(self) -> None:
@@ -72,6 +72,15 @@ class BankAccountStoreTests(unittest.TestCase):
         )
         balance = self.store.get_balance_status("user-1", "123456789012")
         self.assertEqual(balance, {"balance": "300.00", "status": "active"})
+
+    def test_debit_cannot_overdraw_account(self) -> None:
+        with self.assertRaises(ValidationError):
+            self.store.add_transaction(
+                "user-1",
+                "123456789012",
+                amount="999.00",
+                transaction_type="debit",
+            )
 
     def test_invalid_account_data_raises_validation_error(self) -> None:
         with self.assertRaises(ValidationError):

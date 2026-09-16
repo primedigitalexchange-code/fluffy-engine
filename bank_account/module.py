@@ -101,10 +101,6 @@ class BankAccountStore:
         """Retrieve an account if owned by the provided user."""
         self._validate_user_and_account_number(user_id, account_number)
 
-        for owner_id, accounts in self._accounts.items():
-            if account_number in accounts and owner_id != user_id:
-                raise SecurityError("Account does not belong to this user")
-
         try:
             return self._accounts[user_id][account_number]
         except KeyError as error:
@@ -173,6 +169,8 @@ class BankAccountStore:
             if normalized_type == "credit"
             else account.balance - normalized_amount
         )
+        if new_balance < Decimal("0"):
+            raise ValidationError("Insufficient funds for debit transaction")
 
         updated = BankAccount(
             user_id=account.user_id,
