@@ -14,5 +14,5 @@ All values are synthetic example data.
 ## Usage
 
 ```bash
-python /home/runner/work/fluffy-engine/fluffy-engine/bank_profile.py
+python bank_profile.py
 ```
