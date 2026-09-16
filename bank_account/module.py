@@ -25,10 +25,11 @@ Usage example:
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from enum import Enum
+from typing import TypedDict
 from uuid import uuid4
 
 CURRENCY_SCALE = Decimal("0.01")
@@ -70,6 +71,30 @@ class AccountTransaction:
     amount: Decimal
     transaction_type: str
     created_at: datetime
+
+
+class AccountResponse(TypedDict):
+    """Serialized account payload returned by API-style helpers."""
+
+    user_id: str
+    account_number: str
+    account_type: str
+    balance: str
+    status: str
+
+
+class AccountUpdateRequest(TypedDict, total=False):
+    """Supported fields for account update payloads."""
+
+    account_type: str
+    status: str
+
+
+class BalanceStatusResponse(TypedDict):
+    """Balance and status response payload."""
+
+    balance: str
+    status: str
 
 
 class BankAccountStore:
@@ -139,7 +164,7 @@ class BankAccountStore:
         self._accounts[user_id][account_number] = updated
         return updated
 
-    def get_balance_status(self, user_id: str, account_number: str) -> dict[str, str]:
+    def get_balance_status(self, user_id: str, account_number: str) -> BalanceStatusResponse:
         """Get balance and status for an account."""
         account = self.get_account(user_id, account_number)
         return {"balance": f"{account.balance:.2f}", "status": account.status.value}
@@ -234,21 +259,30 @@ class BankAccountStore:
         return decimal_value
 
 
-def retrieve_account(store: BankAccountStore, user_id: str, account_number: str) -> dict[str, str]:
-    """API-style endpoint to retrieve account information."""
-    account = store.get_account(user_id, account_number)
-    payload = asdict(account)
-    payload["balance"] = f"{account.balance:.2f}"
-    payload["status"] = account.status.value
+def _serialize_account(account: BankAccount) -> AccountResponse:
+    payload: AccountResponse = {
+        "user_id": account.user_id,
+        "account_number": account.account_number,
+        "account_type": account.account_type,
+        "balance": f"{account.balance:.2f}",
+        "status": account.status.value,
+    }
     return payload
+
+
+def retrieve_account(
+    store: BankAccountStore, user_id: str, account_number: str
+) -> AccountResponse:
+    """API-style endpoint to retrieve account information."""
+    return _serialize_account(store.get_account(user_id, account_number))
 
 
 def update_account(
     store: BankAccountStore,
     user_id: str,
     account_number: str,
-    payload: dict[str, str],
-) -> dict[str, str]:
+    payload: AccountUpdateRequest,
+) -> AccountResponse:
     """API-style endpoint to update account details."""
     account_type = payload.get("account_type")
     status = payload.get("status")
@@ -258,28 +292,19 @@ def update_account(
         account_type=account_type,
         status=status,
     )
-    response = asdict(updated)
-    response["balance"] = f"{updated.balance:.2f}"
-    response["status"] = updated.status.value
-    return response
+    return _serialize_account(updated)
 
 
-def list_user_accounts(store: BankAccountStore, user_id: str) -> list[dict[str, str]]:
+def list_user_accounts(store: BankAccountStore, user_id: str) -> list[AccountResponse]:
     """API-style endpoint to list all accounts for a user."""
     accounts = store.list_accounts(user_id)
-    payload: list[dict[str, str]] = []
-    for account in accounts:
-        serialized = asdict(account)
-        serialized["balance"] = f"{account.balance:.2f}"
-        serialized["status"] = account.status.value
-        payload.append(serialized)
-    return payload
+    return [_serialize_account(account) for account in accounts]
 
 
 def get_account_balance_status(
     store: BankAccountStore,
     user_id: str,
     account_number: str,
-) -> dict[str, str]:
+) -> BalanceStatusResponse:
     """API-style endpoint to get account balance and status."""
     return store.get_balance_status(user_id, account_number)
