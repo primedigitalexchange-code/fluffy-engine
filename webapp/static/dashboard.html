@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>fluffy-engine bank dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="panel stack">
+        <div class="toolbar">
+          <div>
+            <h1>Connected bank dashboard</h1>
+            <p id="welcome-message">Checking your session…</p>
+          </div>
+          <button id="logout-button" class="button button--secondary" type="button">Logout</button>
+        </div>
+        <p class="notice notice--warning">
+          Sandbox/demo only. Plaid Link handles bank sign-in. In-memory storage, HTTP, and this
+          single-user auth flow are not production-ready.
+        </p>
+        <div class="toolbar">
+          <button id="connect-bank-button" type="button">Connect Bank</button>
+          <span id="connect-status"></span>
+        </div>
+      </section>
+
+      <section class="grid">
+        <section class="panel stack">
+          <h2>Connected accounts</h2>
+          <ul id="accounts-list" class="list"></ul>
+        </section>
+
+        <section class="panel stack">
+          <h2>Recent transactions</h2>
+          <p class="hint">Select an account to load the last 30 days of available history.</p>
+          <ul id="transactions-list" class="list"></ul>
+        </section>
+      </section>
+    </main>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>
