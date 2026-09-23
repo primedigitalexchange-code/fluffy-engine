@@ -59,7 +59,7 @@ def handle_request(
             return 200, {"account": _serialize_account(updated)}
 
         if normalized_method == "GET" and len(parts) == 3 and parts[0] == "users" and parts[2] == "accounts":
-            target_user_id = parts[1]
+            target_user_id = _normalize_user_id(parts[1])
             _ensure_ownership(requesting_user_id=user_id, owner_user_id=target_user_id)
             accounts = store.list_accounts_for_user(target_user_id)
             return 200, {"accounts": [_serialize_account(account) for account in accounts]}
@@ -85,8 +85,17 @@ def handle_request(
 
 
 def _ensure_ownership(*, requesting_user_id: str, owner_user_id: str) -> None:
-    if requesting_user_id != owner_user_id:
+    normalized_requesting_user_id = _normalize_user_id(requesting_user_id)
+    normalized_owner_user_id = _normalize_user_id(owner_user_id)
+    if normalized_requesting_user_id != normalized_owner_user_id:
         raise APIError(403, "forbidden: account does not belong to requesting user")
+
+
+def _normalize_user_id(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise APIError(400, "user_id must be a non-empty string")
+    return normalized
 
 
 def _serialize_account(account: BankAccount) -> dict[str, Any]:

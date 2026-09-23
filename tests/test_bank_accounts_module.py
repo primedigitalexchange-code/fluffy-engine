@@ -108,6 +108,24 @@ class BankAccountsModuleTests(unittest.TestCase):
         self.assertEqual(account_payload["masked_account_number"], "********9012")
         self.assertNotIn("account_number", account_payload)
 
+        status_code, payload = handle_request(
+            self.store,
+            method="GET",
+            path="/users/user-123/accounts",
+            user_id=" user-123 ",
+        )
+        self.assertEqual(status_code, 200)
+        self.assertEqual(len(payload["accounts"]), 1)
+
+        status_code, payload = handle_request(
+            self.store,
+            method="GET",
+            path="/users/ /accounts",
+            user_id="user-123",
+        )
+        self.assertEqual(status_code, 400)
+        self.assertIn("user_id", payload["error"])
+
     def test_user_account_list_and_balance_endpoint(self) -> None:
         other_account = self.store.create_account(
             user_id="user-123",
