@@ -502,9 +502,7 @@ class BankAccountStore:
     def list_accounts_for_user(self, user_id: str) -> list[BankAccount]:
         return self.list_accounts(user_id)
 
-    def get_account(self, user_id: str, account_number: str | None = None) -> BankAccount:
-        if account_number is None:
-            return self.get_account_by_id(user_id)
+    def get_account(self, user_id: str, account_number: str) -> BankAccount:
         account_key = (
             _validate_required_string("user_id", user_id),
             _validate_account_number(account_number),
@@ -526,7 +524,7 @@ class BankAccountStore:
                 raise NotFoundError("account not found")
             return account
 
-    def update_account(self, user_id: str, account_number: str | None = None, **updates: Any) -> BankAccount:
+    def update_account(self, user_id: str, account_number: str, **updates: Any) -> BankAccount:
         unknown_fields = set(updates) - set(_UPDATABLE_ACCOUNT_FIELDS)
         if unknown_fields:
             unknown = ", ".join(sorted(unknown_fields))
@@ -551,14 +549,10 @@ class BankAccountStore:
         normalized_updates.update(_normalize_bank_details(updates))
         normalized_updates.update(_normalize_live_metadata(updates))
 
-        if account_number is None:
-            account = self.get_account_by_id(user_id)
-            account_key = (account.user_id, account.account_number)
-        else:
-            account_key = (
-                _validate_required_string("user_id", user_id),
-                _validate_account_number(account_number),
-            )
+        account_key = (
+            _validate_required_string("user_id", user_id),
+            _validate_account_number(account_number),
+        )
         with self._lock:
             account = self._get_account_unlocked(account_key)
             if "status" in normalized_updates:
@@ -582,12 +576,16 @@ class BankAccountStore:
                 )
             return updated_account
 
+    def update_account_by_id(self, account_id: str, **updates: Any) -> BankAccount:
+        account = self.get_account_by_id(account_id)
+        return BankAccountStore.update_account(self, account.user_id, account.account_number, **updates)
+
     def add_transaction(
         self,
         user_id: str,
-        account_number: str | None = None,
-        amount: Decimal | int | str | None = None,
-        transaction_type: str | None = None,
+        account_number: str,
+        amount: Decimal | int | str,
+        transaction_type: str,
         description: str | None = None,
     ) -> AccountTransaction:
         normalized_transaction_type = _validate_required_string("transaction_type", transaction_type).lower()
@@ -596,14 +594,10 @@ class BankAccountStore:
 
         amount_decimal = _validate_money("amount", amount, allow_zero=False)
         description_text = _validate_optional_string("description", description)
-        if account_number is None:
-            account = self.get_account_by_id(user_id)
-            account_key = (account.user_id, account.account_number)
-        else:
-            account_key = (
-                _validate_required_string("user_id", user_id),
-                _validate_account_number(account_number),
-            )
+        account_key = (
+            _validate_required_string("user_id", user_id),
+            _validate_account_number(account_number),
+        )
         with self._lock:
             account = self._get_account_unlocked(account_key)
             if account.status != AccountStatus.ACTIVE:
@@ -631,33 +625,51 @@ class BankAccountStore:
             self._transactions[account_key].append(transaction)
             return transaction
 
-    def list_transactions(self, user_id: str, account_number: str | None = None) -> list[AccountTransaction]:
-        if account_number is None:
-            account = self.get_account_by_id(user_id)
-            account_key = (account.user_id, account.account_number)
-        else:
-            account_key = (
-                _validate_required_string("user_id", user_id),
-                _validate_account_number(account_number),
-            )
+    def add_transaction_by_id(
+        self,
+        account_id: str,
+        *,
+        amount: Decimal | int | str,
+        transaction_type: str,
+        description: str | None = None,
+    ) -> AccountTransaction:
+        account = self.get_account_by_id(account_id)
+        return BankAccountStore.add_transaction(
+            self,
+            account.user_id,
+            account.account_number,
+            amount,
+            transaction_type,
+            description,
+        )
+
+    def list_transactions(self, user_id: str, account_number: str) -> list[AccountTransaction]:
+        account_key = (
+            _validate_required_string("user_id", user_id),
+            _validate_account_number(account_number),
+        )
         with self._lock:
             account = self._get_account_unlocked(account_key)
             return list(self._transactions[(account.user_id, account.account_number)])
 
-    def get_status_history(self, user_id: str, account_number: str | None = None) -> list[AccountStatusChange]:
-        if account_number is None:
-            account = self.get_account_by_id(user_id)
-            account_key = (account.user_id, account.account_number)
-        else:
-            account_key = (
-                _validate_required_string("user_id", user_id),
-                _validate_account_number(account_number),
-            )
+    def list_transactions_by_id(self, account_id: str) -> list[AccountTransaction]:
+        account = self.get_account_by_id(account_id)
+        return BankAccountStore.list_transactions(self, account.user_id, account.account_number)
+
+    def get_status_history(self, user_id: str, account_number: str) -> list[AccountStatusChange]:
+        account_key = (
+            _validate_required_string("user_id", user_id),
+            _validate_account_number(account_number),
+        )
         with self._lock:
             account = self._get_account_unlocked(account_key)
             return list(self._status_history[(account.user_id, account.account_number)])
 
-    def get_balance_status(self, user_id: str, account_number: str | None = None) -> dict[str, str]:
+    def get_status_history_by_id(self, account_id: str) -> list[AccountStatusChange]:
+        account = self.get_account_by_id(account_id)
+        return BankAccountStore.get_status_history(self, account.user_id, account.account_number)
+
+    def get_balance_status(self, user_id: str, account_number: str) -> dict[str, str]:
         account = self.get_account(user_id, account_number)
         return {
             "account_id": account.account_id,
@@ -666,6 +678,10 @@ class BankAccountStore:
             "currency": account.currency,
             "status": account.status.value,
         }
+
+    def get_balance_status_by_id(self, account_id: str) -> dict[str, str]:
+        account = self.get_account_by_id(account_id)
+        return BankAccountStore.get_balance_status(self, account.user_id, account.account_number)
 
 
 def retrieve_account(store: BankAccountStore, user_id: str, account_number: str) -> dict[str, Any]:

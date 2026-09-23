@@ -6,7 +6,6 @@ from bank_account import (
     AccountStatusChange,
     AccountTransaction,
     BankAccount,
-    BankAccountStore,
     DataSource,
     NotFoundError,
     ValidationError,
@@ -19,6 +18,7 @@ from bank_account import (
     retrieve_account,
     update_account,
 )
+from .store import BankAccountStore
 
 __all__ = [
     "APIError",
