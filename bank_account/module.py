@@ -791,8 +791,7 @@ def handle_request(
             if payload is None:
                 raise APIError(400, "payload is required")
             account = store.get_owned_account_by_id(requester, parts[1])
-            updates = {field_name: payload[field_name] for field_name in _UPDATABLE_ACCOUNT_FIELDS if field_name in payload}
-            updated = store.update_account(account.user_id, account.account_number, **updates)
+            updated = store.update_account(account.user_id, account.account_number, **payload)
             return 200, {"account": _serialize_account(updated)}
 
         if normalized_method == "GET" and len(parts) == 3 and parts[0] == "users" and parts[2] == "accounts":
