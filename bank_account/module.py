@@ -856,6 +856,7 @@ def handle_request(
             return 200, {
                 "account_id": account.account_id,
                 "masked_account_number": account.masked_account_number,
+                "currency": account.currency,
                 "status": account.status.value,
             }
 
