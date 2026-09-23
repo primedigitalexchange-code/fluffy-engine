@@ -31,6 +31,9 @@ class BankAccountStore:
     def create_account_from_live_data(self, **kwargs: Any):
         return self._store.create_account_from_live_data(**kwargs)
 
+    def create_account_from_live_api(self, **kwargs: Any):
+        return self._store.create_account_from_live_data(**kwargs)
+
     def get_account(self, user_id_or_account_id: str, account_number: str | None = None):
         if account_number is not None:
             return self._store.get_account(user_id_or_account_id, account_number)
