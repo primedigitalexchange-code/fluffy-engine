@@ -22,6 +22,12 @@ class BankAccountStoreTests(unittest.TestCase):
             account_number="123456789012",
             account_type="checking",
             balance=Decimal("250.00"),
+            routing_number="123456780",
+            bank_name="Prime Bank",
+            bank_address="1 Main St",
+            city="Springfield",
+            state="il",
+            postal_code="62704",
         )
         self.secondary = BankAccount(
             user_id="user-1",
@@ -48,6 +54,8 @@ class BankAccountStoreTests(unittest.TestCase):
     def test_retrieves_account_and_tracks_status(self) -> None:
         account = self.store.get_account("user-1", "123456789013")
         self.assertEqual(account.status, AccountStatus.INACTIVE)
+        primary = self.store.get_account("user-1", "123456789012")
+        self.assertEqual(primary.state, "IL")
 
     def test_security_check_hides_cross_user_account_access(self) -> None:
         with self.assertRaises(NotFoundError):
@@ -59,9 +67,13 @@ class BankAccountStoreTests(unittest.TestCase):
             "123456789012",
             account_type="business",
             status="suspended",
+            state="ca",
+            city="San Francisco",
         )
         self.assertEqual(updated.account_type, "business")
         self.assertEqual(updated.status, AccountStatus.SUSPENDED)
+        self.assertEqual(updated.state, "CA")
+        self.assertEqual(updated.city, "San Francisco")
 
     def test_add_transaction_updates_balance(self) -> None:
         self.store.add_transaction(
@@ -120,6 +132,13 @@ class BankAccountStoreTests(unittest.TestCase):
                 amount=Decimal("10.999"),
                 transaction_type="credit",
             )
+        with self.assertRaises(ValidationError):
+            self.store.add_transaction(
+                "user-1",
+                "123456789012",
+                amount=Decimal("Infinity"),
+                transaction_type="credit",
+            )
 
     def test_invalid_account_data_raises_validation_error(self) -> None:
         with self.assertRaises(ValidationError):
@@ -129,6 +148,16 @@ class BankAccountStoreTests(unittest.TestCase):
                     account_number="abc",
                     account_type="checking",
                     balance=Decimal("10.00"),
+                )
+            )
+        with self.assertRaises(ValidationError):
+            self.store.create_account(
+                BankAccount(
+                    user_id="user-1",
+                    account_number="123456789999",
+                    account_type="checking",
+                    balance=Decimal("10.00"),
+                    routing_number="123",
                 )
             )
 
@@ -164,6 +193,7 @@ class BankAccountEndpointTests(unittest.TestCase):
         self.assertEqual(account["account_number"], "123456789015")
         self.assertEqual(account["balance"], "99.00")
         self.assertEqual(account["status"], "active")
+        self.assertIsNone(account["routing_number"])
 
         listing = list_user_accounts(store, "user-3")
         self.assertEqual(len(listing), 1)
@@ -177,9 +207,36 @@ class BankAccountEndpointTests(unittest.TestCase):
             {"status": "inactive", "account_type": "savings"},
         )
         self.assertEqual(updated["status"], "inactive")
+        self.assertEqual(updated["account_type"], "savings")
 
         balance_status = get_account_balance_status(store, "user-3", "123456789015")
         self.assertEqual(balance_status, {"balance": "99.00", "status": "inactive"})
+
+    def test_update_endpoint_supports_optional_bank_details(self) -> None:
+        store = BankAccountStore()
+        store.create_account(
+            BankAccount(
+                user_id="user-9",
+                account_number="123456789018",
+                account_type="checking",
+                balance=Decimal("150.00"),
+            )
+        )
+        updated = update_account(
+            store,
+            "user-9",
+            "123456789018",
+            {
+                "routing_number": "987654320",
+                "bank_name": "Live Bank",
+                "state": "ny",
+                "city": "New York",
+            },
+        )
+        self.assertEqual(updated["routing_number"], "987654320")
+        self.assertEqual(updated["bank_name"], "Live Bank")
+        self.assertEqual(updated["state"], "NY")
+        self.assertEqual(updated["city"], "New York")
 
     def test_update_endpoint_rejects_invalid_status(self) -> None:
         store = BankAccountStore()

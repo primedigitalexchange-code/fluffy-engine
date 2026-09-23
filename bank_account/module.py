@@ -60,6 +60,12 @@ class BankAccount:
     account_type: str
     balance: Decimal
     status: AccountStatus = AccountStatus.ACTIVE
+    routing_number: str | None = None
+    bank_name: str | None = None
+    bank_address: str | None = None
+    city: str | None = None
+    state: str | None = None
+    postal_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -81,6 +87,12 @@ class AccountResponse(TypedDict):
     account_type: str
     balance: str
     status: str
+    routing_number: str | None
+    bank_name: str | None
+    bank_address: str | None
+    city: str | None
+    state: str | None
+    postal_code: str | None
 
 
 class AccountUpdateRequest(TypedDict, total=False):
@@ -88,6 +100,12 @@ class AccountUpdateRequest(TypedDict, total=False):
 
     account_type: str
     status: str
+    routing_number: str | None
+    bank_name: str | None
+    bank_address: str | None
+    city: str | None
+    state: str | None
+    postal_code: str | None
 
 
 class BalanceStatusResponse(TypedDict):
@@ -106,6 +124,7 @@ class BankAccountStore:
 
     def create_account(self, account: BankAccount) -> BankAccount:
         """Create and store a new account after validation."""
+        account = self._normalize_account(account)
         self._validate_account(account)
         if any(
             account.account_number in user_accounts
@@ -139,6 +158,12 @@ class BankAccountStore:
         *,
         account_type: str | None = None,
         status: AccountStatus | str | None = None,
+        routing_number: str | None = None,
+        bank_name: str | None = None,
+        bank_address: str | None = None,
+        city: str | None = None,
+        state: str | None = None,
+        postal_code: str | None = None,
     ) -> BankAccount:
         """Update account details and return the updated account."""
         current = self.get_account(user_id, account_number)
@@ -160,7 +185,19 @@ class BankAccountStore:
             account_type=updated_account_type,
             balance=current.balance,
             status=normalized_status,
+            routing_number=(
+                current.routing_number if routing_number is None else routing_number
+            ),
+            bank_name=current.bank_name if bank_name is None else bank_name,
+            bank_address=(
+                current.bank_address if bank_address is None else bank_address
+            ),
+            city=current.city if city is None else city,
+            state=current.state if state is None else state,
+            postal_code=current.postal_code if postal_code is None else postal_code,
         )
+        updated = self._normalize_account(updated)
+        self._validate_account(updated)
         self._accounts[user_id][account_number] = updated
         return updated
 
@@ -232,8 +269,18 @@ class BankAccountStore:
             raise ValidationError("account_number must be 10-18 digits")
         if account.balance < Decimal("0"):
             raise ValidationError("balance cannot be negative")
+        if not account.balance.is_finite():
+            raise ValidationError("balance must be finite")
         if account.balance != account.balance.quantize(CURRENCY_SCALE):
             raise ValidationError("balance must use two decimal places")
+        if account.routing_number is not None and not (
+            account.routing_number.isdigit() and len(account.routing_number) == 9
+        ):
+            raise ValidationError("routing_number must be exactly 9 digits")
+        if account.state is not None and not (
+            len(account.state) == 2 and account.state.isalpha()
+        ):
+            raise ValidationError("state must be a 2-letter code")
 
     @staticmethod
     def _validate_user_and_account_number(user_id: str, account_number: str) -> None:
@@ -245,6 +292,8 @@ class BankAccountStore:
     @staticmethod
     def _to_decimal(value: Decimal | str, *, field_name: str) -> Decimal:
         if isinstance(value, Decimal):
+            if not value.is_finite():
+                raise ValidationError(f"{field_name} must be finite")
             if value != value.quantize(CURRENCY_SCALE):
                 raise ValidationError(f"{field_name} must use two decimal places")
             return value
@@ -254,9 +303,35 @@ class BankAccountStore:
             decimal_value = Decimal(value)
         except (InvalidOperation, TypeError) as error:
             raise ValidationError(f"{field_name} must be a valid decimal value") from error
+        if not decimal_value.is_finite():
+            raise ValidationError(f"{field_name} must be finite")
         if decimal_value != decimal_value.quantize(CURRENCY_SCALE):
             raise ValidationError(f"{field_name} must use two decimal places")
         return decimal_value
+
+    @staticmethod
+    def _normalize_optional_field(value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+    @classmethod
+    def _normalize_account(cls, account: BankAccount) -> BankAccount:
+        state = cls._normalize_optional_field(account.state)
+        return BankAccount(
+            user_id=account.user_id.strip(),
+            account_number=account.account_number.strip(),
+            account_type=account.account_type.strip(),
+            balance=account.balance,
+            status=account.status,
+            routing_number=cls._normalize_optional_field(account.routing_number),
+            bank_name=cls._normalize_optional_field(account.bank_name),
+            bank_address=cls._normalize_optional_field(account.bank_address),
+            city=cls._normalize_optional_field(account.city),
+            state=state.upper() if state is not None else None,
+            postal_code=cls._normalize_optional_field(account.postal_code),
+        )
 
 
 def _serialize_account(account: BankAccount) -> AccountResponse:
@@ -266,6 +341,12 @@ def _serialize_account(account: BankAccount) -> AccountResponse:
         "account_type": account.account_type,
         "balance": f"{account.balance:.2f}",
         "status": account.status.value,
+        "routing_number": account.routing_number,
+        "bank_name": account.bank_name,
+        "bank_address": account.bank_address,
+        "city": account.city,
+        "state": account.state,
+        "postal_code": account.postal_code,
     }
     return payload
 
@@ -291,6 +372,12 @@ def update_account(
         account_number,
         account_type=account_type,
         status=status,
+        routing_number=payload.get("routing_number"),
+        bank_name=payload.get("bank_name"),
+        bank_address=payload.get("bank_address"),
+        city=payload.get("city"),
+        state=payload.get("state"),
+        postal_code=payload.get("postal_code"),
     )
     return _serialize_account(updated)
 

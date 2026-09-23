@@ -17,6 +17,7 @@ The `bank_account` package provides in-memory account management with:
 - bank account and transaction data models
 - multiple accounts per user
 - account status tracking (`active`, `inactive`, `suspended`)
+- optional bank metadata (routing number, bank/address/location fields)
 - validated create/retrieve/update/list operations
 - API-style endpoint functions for retrieval, updates, account listing, and balance/status lookup
 
@@ -33,6 +34,9 @@ store.create_account(
         account_number="123456789012",
         account_type="checking",
         balance=Decimal("100.00"),
+        routing_number="123456780",
+        bank_name="Live Build Bank",
+        state="IL",
     )
 )
 
