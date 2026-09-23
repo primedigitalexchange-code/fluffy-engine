@@ -22,7 +22,9 @@ python bank_profile.py
 
 The in-memory `bank_account` module stores either mock or live account records.
 Each `BankAccount` now includes a `data_source` field so callers can distinguish
-between synthetic and production-linked accounts.
+between synthetic and production-linked accounts. This module is the legacy
+Plaid/mock integration utility, while the separate `bank_accounts` package below
+provides the account-management API feature set.
 
 ## Bank accounts feature module
 

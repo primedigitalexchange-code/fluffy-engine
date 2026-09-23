@@ -92,6 +92,8 @@ def _ensure_ownership(*, requesting_user_id: str, owner_user_id: str) -> None:
 
 
 def _normalize_user_id(value: str) -> str:
+    if not isinstance(value, str):
+        raise APIError(400, "user_id must be a string")
     normalized = value.strip()
     if not normalized:
         raise APIError(400, "user_id must be a non-empty string")
