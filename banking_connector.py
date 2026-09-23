@@ -143,7 +143,7 @@ class AppCredentials:
             )
         return cls(
             username=_require_string(username_var, username),
-            ****** password),
+            password=_require_string(password_var, password),
         )
 
 
