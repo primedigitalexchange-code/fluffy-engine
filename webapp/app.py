@@ -404,7 +404,7 @@ def create_app(
         signature = request.headers.get("Plaid-Verification")
         if not signature:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing webhook signature")
-        claims = _verify_plaid_webhook_jwt(app, signature, payload_bytes)
+        claims = _verify_plaid_webhook_jwt(app, signature)
         if claims.get("request_body_sha256") != hashlib.sha256(payload_bytes).hexdigest():
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Webhook payload hash mismatch")
         try:
@@ -613,8 +613,7 @@ def _is_transfer_stale(transfer: LiveTransfer, now: datetime, stale_after_second
     return transfer.last_updated_at + timedelta(seconds=stale_after_seconds) <= now
 
 
-def _verify_plaid_webhook_jwt(app: FastAPI, signed_jwt: str, payload_bytes: bytes) -> dict[str, Any]:
-    del payload_bytes
+def _verify_plaid_webhook_jwt(app: FastAPI, signed_jwt: str) -> dict[str, Any]:
     try:
         header = jwt.get_unverified_header(signed_jwt)
     except Exception as exc:
