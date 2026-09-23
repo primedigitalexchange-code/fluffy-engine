@@ -331,6 +331,16 @@ def _serialize_status_change(change: AccountStatusChange) -> dict[str, Any]:
     }
 
 
+def _serialize_balance_status(account: BankAccount) -> dict[str, str]:
+    return {
+        "account_id": account.account_id,
+        "masked_account_number": account.masked_account_number,
+        "balance": f"{account.balance:.2f}",
+        "currency": account.currency,
+        "status": account.status.value,
+    }
+
+
 
 def _read_record_field(record: Any, field_name: str, default: Any = _MISSING) -> Any:
     if isinstance(record, Mapping):
@@ -712,25 +722,12 @@ class BankAccountStore:
 
     def get_balance_status(self, user_id: str, account_number: str) -> dict[str, str]:
         account = self.get_account(user_id, account_number)
-        return {
-            "account_id": account.account_id,
-            "masked_account_number": account.masked_account_number,
-            "balance": f"{account.balance:.2f}",
-            "currency": account.currency,
-            "status": account.status.value,
-        }
+        return _serialize_balance_status(account)
 
     def get_balance_status_by_id(self, account_id: str) -> dict[str, str]:
         normalized_account_id = _validate_required_string("account_id", account_id)
         with self._lock:
-            account = self._get_account_by_id_unlocked(normalized_account_id)
-            return {
-                "account_id": account.account_id,
-                "masked_account_number": account.masked_account_number,
-                "balance": f"{account.balance:.2f}",
-                "currency": account.currency,
-                "status": account.status.value,
-            }
+            return _serialize_balance_status(self._get_account_by_id_unlocked(normalized_account_id))
 
 
 def retrieve_account(store: BankAccountStore, user_id: str, account_number: str) -> dict[str, Any]:
@@ -856,11 +853,10 @@ def handle_request(
 
         if normalized_method == "GET" and len(parts) == 3 and parts[0] == "accounts" and parts[2] == "status":
             account = store.get_owned_account_by_id(requester, parts[1])
-            balance_status = store.get_balance_status(account.user_id, account.account_number)
             return 200, {
-                "account_id": balance_status["account_id"],
-                "masked_account_number": balance_status["masked_account_number"],
-                "status": balance_status["status"],
+                "account_id": account.account_id,
+                "masked_account_number": account.masked_account_number,
+                "status": account.status.value,
             }
 
         raise APIError(404, "endpoint not found")
