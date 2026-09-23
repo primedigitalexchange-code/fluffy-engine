@@ -5,6 +5,7 @@ from bank_account import (
     AccountStatus,
     BankAccountStore,
     DataSource,
+    NotFoundError,
     ValidationError,
     create_account_from_live_api,
     create_account_from_mock_data,
@@ -260,6 +261,192 @@ class BankAccountStoreTests(unittest.TestCase):
 
         with self.assertRaises(ValidationError):
             self.store.add_transaction("user-123", "000123456789", "1.999", "deposit")
+
+    def test_make_payment_transfers_funds_and_records_transactions(self) -> None:
+        self.store.create_account(
+            user_id="user-123",
+            account_number="000123456700",
+            account_type="checking",
+            balance="150.00",
+        )
+        self.store.create_account(
+            user_id="user-456",
+            account_number="000123456701",
+            account_type="checking",
+            balance="25.00",
+        )
+
+        payment = self.store.make_payment(
+            source_user_id="user-123",
+            source_account_number="000123456700",
+            destination_user_id="user-456",
+            destination_account_number="000123456701",
+            amount="40.25",
+            memo="Invoice 42",
+        )
+
+        self.assertEqual(str(payment.amount), "40.25")
+        self.assertEqual(payment.memo, "Invoice 42")
+        self.assertEqual(
+            self.store.get_balance_status("user-123", "000123456700")["balance"],
+            "109.75",
+        )
+        self.assertEqual(
+            self.store.get_balance_status("user-456", "000123456701")["balance"],
+            "65.25",
+        )
+
+        source_transaction = self.store.list_transactions("user-123", "000123456700")[-1]
+        destination_transaction = self.store.list_transactions("user-456", "000123456701")[-1]
+        self.assertEqual(source_transaction.transaction_type, "payment_debit")
+        self.assertEqual(destination_transaction.transaction_type, "payment_credit")
+        self.assertEqual(source_transaction.payment_id, payment.payment_id)
+        self.assertEqual(destination_transaction.payment_id, payment.payment_id)
+        self.assertEqual(source_transaction.memo, "Invoice 42")
+        self.assertEqual(destination_transaction.memo, "Invoice 42")
+
+    def test_make_payment_rejects_insufficient_funds_without_mutating_balances(self) -> None:
+        self.store.create_account(
+            user_id="user-123",
+            account_number="000123456702",
+            account_type="checking",
+            balance="10.00",
+        )
+        self.store.create_account(
+            user_id="user-456",
+            account_number="000123456703",
+            account_type="checking",
+            balance="5.00",
+        )
+
+        with self.assertRaises(ValidationError):
+            self.store.make_payment(
+                source_user_id="user-123",
+                source_account_number="000123456702",
+                destination_user_id="user-456",
+                destination_account_number="000123456703",
+                amount="10.01",
+                memo="Over limit",
+            )
+
+        self.assertEqual(
+            self.store.get_balance_status("user-123", "000123456702")["balance"],
+            "10.00",
+        )
+        self.assertEqual(
+            self.store.get_balance_status("user-456", "000123456703")["balance"],
+            "5.00",
+        )
+        self.assertEqual(self.store.list_transactions("user-123", "000123456702"), [])
+        self.assertEqual(self.store.list_transactions("user-456", "000123456703"), [])
+
+    def test_make_payment_rejects_invalid_amounts(self) -> None:
+        self.store.create_account(
+            user_id="user-123",
+            account_number="000123456704",
+            account_type="checking",
+            balance="25.00",
+        )
+        self.store.create_account(
+            user_id="user-456",
+            account_number="000123456705",
+            account_type="checking",
+            balance="10.00",
+        )
+
+        for amount in ("0.00", "-1.00", "1.999"):
+            with self.subTest(amount=amount):
+                with self.assertRaises(ValidationError):
+                    self.store.make_payment(
+                        source_user_id="user-123",
+                        source_account_number="000123456704",
+                        destination_user_id="user-456",
+                        destination_account_number="000123456705",
+                        amount=amount,
+                        memo="Invalid payment",
+                    )
+
+    def test_make_payment_rejects_same_source_and_destination(self) -> None:
+        self.store.create_account(
+            user_id="user-123",
+            account_number="000123456706",
+            account_type="checking",
+            balance="25.00",
+        )
+
+        with self.assertRaises(ValidationError):
+            self.store.make_payment(
+                source_user_id="user-123",
+                source_account_number="000123456706",
+                destination_user_id="user-123",
+                destination_account_number="000123456706",
+                amount="1.00",
+                memo="Self payment",
+            )
+
+    def test_make_payment_requires_active_accounts(self) -> None:
+        self.store.create_account(
+            user_id="user-123",
+            account_number="000123456707",
+            account_type="checking",
+            balance="25.00",
+            status=AccountStatus.INACTIVE,
+        )
+        self.store.create_account(
+            user_id="user-456",
+            account_number="000123456708",
+            account_type="checking",
+            balance="10.00",
+        )
+
+        with self.assertRaises(ValidationError):
+            self.store.make_payment(
+                source_user_id="user-123",
+                source_account_number="000123456707",
+                destination_user_id="user-456",
+                destination_account_number="000123456708",
+                amount="1.00",
+                memo="Inactive source",
+            )
+
+        self.store.update_account(
+            "user-123",
+            "000123456707",
+            status=AccountStatus.ACTIVE,
+        )
+        self.store.update_account(
+            "user-456",
+            "000123456708",
+            status=AccountStatus.SUSPENDED,
+        )
+
+        with self.assertRaises(ValidationError):
+            self.store.make_payment(
+                source_user_id="user-123",
+                source_account_number="000123456707",
+                destination_user_id="user-456",
+                destination_account_number="000123456708",
+                amount="1.00",
+                memo="Suspended destination",
+            )
+
+    def test_make_payment_requires_existing_destination_account(self) -> None:
+        self.store.create_account(
+            user_id="user-123",
+            account_number="000123456709",
+            account_type="checking",
+            balance="25.00",
+        )
+
+        with self.assertRaises(NotFoundError):
+            self.store.make_payment(
+                source_user_id="user-123",
+                source_account_number="000123456709",
+                destination_user_id="user-456",
+                destination_account_number="000123456710",
+                amount="1.00",
+                memo="Missing destination",
+            )
 
 
 if __name__ == "__main__":
