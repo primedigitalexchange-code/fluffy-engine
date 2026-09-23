@@ -37,7 +37,7 @@ def handle_request(
     """
 
     normalized_method = method.upper().strip()
-    parts = [part for part in path.strip("/").split("/") if part]
+    parts = path.strip("/").split("/")
 
     try:
         if normalized_method == "GET" and len(parts) == 2 and parts[0] == "accounts":
