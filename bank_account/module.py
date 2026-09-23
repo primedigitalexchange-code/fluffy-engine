@@ -827,7 +827,7 @@ def handle_request(
     payload: dict[str, Any] | None = None,
 ) -> tuple[int, dict[str, Any]]:
     normalized_method = _validate_required_string("method", method).upper()
-    normalized_path = path.strip("/")
+    normalized_path = _validate_required_string("path", path).strip("/")
     parts = normalized_path.split("/") if normalized_path else []
 
     try:
