@@ -11,7 +11,6 @@ from banking_connector import (
     BankingConfig,
     ConfigurationError,
     EncryptedTokenStore,
-    handle_banking_request,
     PlaidConnector,
 )
 
@@ -222,80 +221,6 @@ class BankingConnectorTests(unittest.TestCase):
         self.assertNotIn("access-sandbox-secret", str(raised.exception))
         self.assertNotIn("public-sandbox-bad", str(raised.exception))
         self.assertIn("[REDACTED_TOKEN]", str(raised.exception))
-
-    def test_handle_banking_request_creates_link_token(self) -> None:
-        opener = RecordingOpener(
-            [
-                {"link_token": "link-1", "expiration": "2026-09-16T00:00:00Z", "request_id": "request-1"},
-            ]
-        )
-        connector = PlaidConnector(self.config, opener=opener)
-
-        response = handle_banking_request(
-            connector,
-            method="POST",
-            path="/bank/link-token",
-            body={"user_id": "user-123"},
-        )
-
-        self.assertEqual(response["status"], 200)
-        self.assertEqual(response["body"]["link_token"], "link-1")
-
-    def test_handle_banking_request_connects_account_and_masks_numbers(self) -> None:
-        opener = RecordingOpener(
-            [
-                {"access_token": "access-sandbox-secret", "item_id": "item-1", "request_id": "request-1"},
-                {
-                    "numbers": {
-                        "ach": [
-                            {
-                                "account_id": "account-1",
-                                "account": "000123456789",
-                                "routing": "990000000",
-                            }
-                        ]
-                    }
-                },
-                {
-                    "accounts": [
-                        {
-                            "account_id": "account-1",
-                            "balances": {"available": 2485.77, "current": 2485.77},
-                            "subtype": "checking",
-                        }
-                    ]
-                },
-                {"item": {"institution_id": "ins_123"}},
-                {"institution": {"name": "Live Build Bank"}},
-            ]
-        )
-        connector = PlaidConnector(self.config, opener=opener)
-
-        response = handle_banking_request(
-            connector,
-            method="POST",
-            path="/bank/connect",
-            body={"user_id": "user-123", "public_token": "public-sandbox-good"},
-        )
-
-        self.assertEqual(response["status"], 200)
-        self.assertEqual(response["body"]["item_id"], "item-1")
-        self.assertEqual(response["body"]["accounts"][0]["masked_account_number"], "********6789")
-        self.assertNotIn("account_number", response["body"]["accounts"][0])
-
-    def test_handle_banking_request_rejects_invalid_payload(self) -> None:
-        opener = RecordingOpener([])
-        connector = PlaidConnector(self.config, opener=opener)
-
-        response = handle_banking_request(
-            connector,
-            method="POST",
-            path="/bank/connect",
-            body={"user_id": "user-123"},
-        )
-
-        self.assertEqual(response["status"], 400)
-        self.assertEqual(response["body"]["error"], "invalid_request")
 
     # Example live integration test (kept commented out because it requires real Plaid keys):
     #

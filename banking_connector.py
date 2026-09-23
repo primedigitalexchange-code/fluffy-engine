@@ -55,10 +55,6 @@ class TokenStorageError(BankingConnectorError):
     """Raised when an encrypted token cannot be loaded or stored."""
 
 
-class BankingRequestValidationError(BankingConnectorError):
-    """Raised when an API-style banking request payload is invalid."""
-
-
 @dataclass(frozen=True)
 class BankingConfig:
     mode: str
@@ -408,71 +404,6 @@ class PlaidConnector:
 
 def build_banking_connector_from_env(env: Mapping[str, str] | None = None) -> PlaidConnector:
     return PlaidConnector(BankingConfig.from_env(env))
-
-
-def handle_banking_request(
-    connector: PlaidConnector,
-    *,
-    method: str,
-    path: str,
-    body: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    normalized_method = _require_string("method", method).upper()
-    normalized_path = _require_string("path", path)
-    payload = body or {}
-    if not isinstance(payload, Mapping):
-        raise BankingRequestValidationError("body must be a JSON object")
-
-    try:
-        if normalized_method != "POST":
-            return {
-                "status": 405,
-                "body": {"error": "method_not_allowed", "message": "Only POST is supported"},
-            }
-        if normalized_path == "/bank/link-token":
-            result = connector.create_link_token(
-                user_id=_require_string("user_id", payload.get("user_id")),
-            )
-            return {"status": 200, "body": result}
-        if normalized_path == "/bank/connect":
-            session = connector.connect_account(
-                user_id=_require_string("user_id", payload.get("user_id")),
-                public_token=_require_string("public_token", payload.get("public_token")),
-            )
-            return {
-                "status": 200,
-                "body": {
-                    "item_id": session.item_id,
-                    "access_token_reference": session.access_token_reference,
-                    "accounts": [
-                        {
-                            "account_id": account.account_id,
-                            "account_type": account.account_type,
-                            "balance": f"{account.balance:.2f}",
-                            "bank_name": account.bank_name,
-                            "masked_account_number": _mask_account_number(account.account_number),
-                        }
-                        for account in session.accounts
-                    ],
-                },
-            }
-        return {
-            "status": 404,
-            "body": {"error": "not_found", "message": f"Unsupported path: {normalized_path}"},
-        }
-    except BankingAuthenticationError as exc:
-        return {"status": 401, "body": {"error": "authentication_failed", "message": str(exc)}}
-    except (BankingRequestValidationError, ValueError, TokenStorageError) as exc:
-        return {"status": 400, "body": {"error": "invalid_request", "message": str(exc)}}
-    except BankingAPIError as exc:
-        return {"status": 502, "body": {"error": "banking_provider_error", "message": str(exc)}}
-
-
-def _mask_account_number(account_number: str) -> str:
-    normalized = _require_string("account_number", account_number)
-    if len(normalized) <= 4:
-        return normalized
-    return f"{'*' * (len(normalized) - 4)}{normalized[-4:]}"
 
 
 def _normalize_fernet_key(key: str) -> bytes:
