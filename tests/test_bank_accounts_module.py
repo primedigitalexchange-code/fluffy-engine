@@ -45,7 +45,20 @@ class BankAccountsModuleTests(unittest.TestCase):
                 currency="US",
             )
 
+        with self.assertRaises(ValidationError):
+            self.store.create_account(
+                user_id="user-456",
+                account_number="123456789012",
+                account_type="checking",
+            )
+
     def test_patch_requires_reason_for_suspended_to_active_transition(self) -> None:
+        self.store.update_account(self.account.account_id, status="inactive")
+        history = self.store.get_status_history(self.account.account_id)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0].old_status, AccountStatus.ACTIVE)
+        self.assertEqual(history[0].new_status, AccountStatus.INACTIVE)
+
         self.store.update_account(self.account.account_id, status="suspended")
 
         status_code, payload = handle_request(
@@ -69,7 +82,7 @@ class BankAccountsModuleTests(unittest.TestCase):
         self.assertEqual(status_code, 200)
         self.assertEqual(payload["account"]["status"], "active")
         history = self.store.get_status_history(self.account.account_id)
-        self.assertEqual(len(history), 2)
+        self.assertEqual(len(history), 3)
         self.assertEqual(history[-1].old_status, AccountStatus.SUSPENDED)
         self.assertEqual(history[-1].new_status, AccountStatus.ACTIVE)
         self.assertEqual(history[-1].reason, "manual review passed")

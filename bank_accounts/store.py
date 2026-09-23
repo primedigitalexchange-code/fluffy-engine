@@ -29,7 +29,7 @@ class BankAccountStore:
         self._lock = RLock()
         self._accounts_by_id: dict[str, BankAccount] = {}
         self._account_ids_by_user: dict[str, list[str]] = {}
-        self._account_numbers_by_user: dict[str, set[str]] = {}
+        self._account_id_by_account_number: dict[str, str] = {}
         self._transactions_by_account: dict[str, list[AccountTransaction]] = {}
         self._status_history_by_account: dict[str, list[AccountStatusChange]] = {}
 
@@ -57,8 +57,8 @@ class BankAccountStore:
         normalized_status = _validate_status(status)
 
         with self._lock:
-            if normalized_account_number in self._account_numbers_by_user.get(normalized_user_id, set()):
-                raise ValidationError("account number already exists for this user")
+            if normalized_account_number in self._account_id_by_account_number:
+                raise ValidationError("account number already exists")
 
             timestamp = utc_now()
             account = BankAccount(
@@ -73,8 +73,8 @@ class BankAccountStore:
                 updated_at=timestamp,
             )
             self._accounts_by_id[account.account_id] = account
+            self._account_id_by_account_number[account.account_number] = account.account_id
             self._account_ids_by_user.setdefault(account.user_id, []).append(account.account_id)
-            self._account_numbers_by_user.setdefault(account.user_id, set()).add(account.account_number)
             self._transactions_by_account[account.account_id] = []
             self._status_history_by_account[account.account_id] = []
             return account
@@ -260,7 +260,10 @@ def _validate_money(value: Any, *, field_name: str, allow_zero: bool) -> Decimal
         raise ValidationError(f"{field_name} must be a valid decimal amount") from exc
     if not amount.is_finite():
         raise ValidationError(f"{field_name} must be a finite decimal amount")
-    quantized = amount.quantize(Decimal("0.01"))
+    try:
+        quantized = amount.quantize(Decimal("0.01"))
+    except InvalidOperation as exc:
+        raise ValidationError(f"{field_name} must be a valid decimal amount") from exc
     if quantized != amount:
         raise ValidationError(f"{field_name} must have at most 2 decimal places")
     if quantized < Decimal("0.00") or (not allow_zero and quantized == Decimal("0.00")):
