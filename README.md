@@ -24,6 +24,20 @@ The in-memory `bank_account` module stores either mock or live account records.
 Each `BankAccount` now includes a `data_source` field so callers can distinguish
 between synthetic and production-linked accounts.
 
+### In-memory payment demo
+
+The repository also includes an in-memory payment flow for moving balances
+between accounts already loaded into a `BankAccountStore`. This is a demo-only
+ledger transfer inside the Python process:
+
+- it **does not** initiate ACH, wire, RTP, card, or any other live-money rail
+- it fails safely if the source/destination accounts are missing, inactive, or
+  underfunded
+- Plaid is only used here for linked-account metadata/balance retrieval in live
+  mode; **Plaid alone does not execute payments in this repository**
+- the synthetic bank profile values in this repository are test fixtures only
+  and must never be used or presented as real payment credentials
+
 ### Create an account from mock data
 
 ```python
@@ -174,6 +188,13 @@ for transaction in transactions:
 - **Compliance**: if you persist live tokens or account metadata in production,
   move the encrypted store behind a KMS/HSM-backed secret vault and review your
   NACHA, PCI-DSS, and privacy obligations before launch.
+
+## FastAPI dashboard demo
+
+The demo FastAPI dashboard in `webapp/` is authenticated with HTTP Basic using
+`APP_USERNAME` and `APP_PASSWORD`, and it submits in-memory payments between
+accounts already present in the store. See `webapp/README.md` for the run
+instructions and the demo-only payment disclaimer.
 
 ## Limitations
 
