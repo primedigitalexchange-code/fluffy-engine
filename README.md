@@ -120,6 +120,105 @@ connected = connector.connect_account(
 print(connected.access_token_reference)
 ```
 
+### Minimal backend login endpoints
+
+If your backend receives HTTP requests and you want a small built-in router for
+the login flow, use `handle_banking_request`:
+
+```python
+from banking_connector import BankingConfig, PlaidConnector, handle_banking_request
+
+connector = PlaidConnector(BankingConfig.from_env())
+
+# POST /bank/link-token with {"user_id": "..."}
+link_token_response = handle_banking_request(
+    connector,
+    method="POST",
+    path="/bank/link-token",
+    body={"user_id": "user-123"},
+)
+
+# POST /bank/connect with {"user_id": "...", "public_token": "..."}
+connect_response = handle_banking_request(
+    connector,
+    method="POST",
+    path="/bank/connect",
+    body={"user_id": "user-123", "public_token": "public-token-from-frontend"},
+)
+```
+
+`/bank/connect` returns masked account numbers only (`masked_account_number`),
+plus `item_id` and `access_token_reference` for secure server-side persistence.
+
+### Flask wiring example
+
+```python
+from flask import Flask, jsonify, request
+
+from banking_connector import BankingConfig, PlaidConnector, handle_banking_request
+
+app = Flask(__name__)
+connector = PlaidConnector(BankingConfig.from_env())
+
+
+@app.post("/bank/link-token")
+def create_bank_link_token():
+    response = handle_banking_request(
+        connector,
+        method="POST",
+        path="/bank/link-token",
+        body=request.get_json(silent=True) or {},
+    )
+    return jsonify(response["body"]), response["status"]
+
+
+@app.post("/bank/connect")
+def connect_bank_account():
+    response = handle_banking_request(
+        connector,
+        method="POST",
+        path="/bank/connect",
+        body=request.get_json(silent=True) or {},
+    )
+    return jsonify(response["body"]), response["status"]
+```
+
+### FastAPI wiring example
+
+```python
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+
+from banking_connector import BankingConfig, PlaidConnector, handle_banking_request
+
+app = FastAPI()
+connector = PlaidConnector(BankingConfig.from_env())
+
+
+@app.post("/bank/link-token")
+async def create_bank_link_token(request: Request):
+    payload = await request.json()
+    response = handle_banking_request(
+        connector,
+        method="POST",
+        path="/bank/link-token",
+        body=payload,
+    )
+    return JSONResponse(content=response["body"], status_code=response["status"])
+
+
+@app.post("/bank/connect")
+async def connect_bank_account(request: Request):
+    payload = await request.json()
+    response = handle_banking_request(
+        connector,
+        method="POST",
+        path="/bank/connect",
+        body=payload,
+    )
+    return JSONResponse(content=response["body"], status_code=response["status"])
+```
+
 ### Retrieve a live balance
 
 ```python
