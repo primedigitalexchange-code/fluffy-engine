@@ -117,6 +117,37 @@ class BankingConfig:
 
 
 @dataclass(frozen=True)
+class AppCredentials:
+    username: str
+    password: str
+
+    @classmethod
+    def from_env(
+        cls,
+        env: Mapping[str, str] | None = None,
+        *,
+        username_var: str = "APP_USERNAME",
+        password_var: str = "APP_PASSWORD",
+    ) -> "AppCredentials":
+        source = os.environ if env is None else env
+        username = source.get(username_var)
+        password = source.get(password_var)
+        missing = [
+            name
+            for name, value in ((username_var, username), (password_var, password))
+            if value is None or not value.strip()
+        ]
+        if missing:
+            raise ConfigurationError(
+                f"Missing required application credential environment variables: {', '.join(missing)}"
+            )
+        return cls(
+            username=_require_string(username_var, username),
+            password=_require_string(password_var, password),
+        )
+
+
+@dataclass(frozen=True)
 class LiveBankAccountData:
     account_id: str
     item_id: str
@@ -404,6 +435,10 @@ class PlaidConnector:
 
 def build_banking_connector_from_env(env: Mapping[str, str] | None = None) -> PlaidConnector:
     return PlaidConnector(BankingConfig.from_env(env))
+
+
+def load_app_credentials_from_env(env: Mapping[str, str] | None = None) -> AppCredentials:
+    return AppCredentials.from_env(env)
 
 
 def _normalize_fernet_key(key: str) -> bytes:
