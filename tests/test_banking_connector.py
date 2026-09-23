@@ -7,6 +7,7 @@ import unittest
 from urllib.error import HTTPError
 
 from banking_connector import (
+    AppCredentials,
     BankingAuthenticationError,
     BankingConfig,
     ConfigurationError,
@@ -72,6 +73,23 @@ class BankingConnectorTests(unittest.TestCase):
     def test_live_configuration_requires_credentials(self) -> None:
         with self.assertRaises(ConfigurationError):
             BankingConfig.from_env({"FLUFFY_ENGINE_BANK_DATA_MODE": "live"})
+
+    def test_app_credentials_load_from_environment(self) -> None:
+        credentials = AppCredentials.from_env(
+            {
+                "APP_USERNAME": "app-user@example.com",
+                "APP_PASSWORD": "top-secret-value",
+            }
+        )
+
+        self.assertEqual(credentials.username, "app-user@example.com")
+        self.assertEqual(credentials.password, "top-secret-value")
+
+    def test_app_credentials_require_both_environment_variables(self) -> None:
+        with self.assertRaises(ConfigurationError) as raised:
+            AppCredentials.from_env({"APP_USERNAME": "app-user@example.com"})
+
+        self.assertIn("APP_PASSWORD", str(raised.exception))
 
     def test_token_store_encrypts_tokens_at_rest(self) -> None:
         store = EncryptedTokenStore("unit-test-token-encryption-key")

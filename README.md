@@ -92,6 +92,14 @@ export BANKING_RATE_LIMIT_PER_MINUTE=30
 export BANKING_LOG_LEVEL=INFO
 ```
 
+If your application also needs its own runtime login separate from Plaid, provide
+it through environment variables instead of hardcoding secrets in the repository:
+
+```bash
+export APP_USERNAME='your-app-username'
+export APP_PASSWORD='your-app-password'
+```
+
 ### Getting Plaid API credentials
 
 1. Create a Plaid developer account.
