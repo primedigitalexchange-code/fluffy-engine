@@ -31,16 +31,54 @@ class BankAccountStore:
     def create_account_from_live_data(self, **kwargs: Any):
         return self._store.create_account_from_live_data(**kwargs)
 
-    def get_account(self, account_id: str):
-        return self._store.get_account_by_id(account_id)
+    def get_account(self, user_id_or_account_id: str, account_number: str | None = None):
+        if account_number is not None:
+            return self._store.get_account(user_id_or_account_id, account_number)
+        return self.get_account_by_id(user_id_or_account_id)
 
     def list_accounts_for_user(self, user_id: str):
         return self._store.list_accounts(user_id)
 
-    def update_account(self, account_id: str, **updates: Any):
+    def get_account_by_id(self, account_id: str):
+        return self._store.get_account_by_id(account_id)
+
+    def update_account(
+        self,
+        user_id_or_account_id: str,
+        account_number: str | None = None,
+        **updates: Any,
+    ):
+        if account_number is None:
+            return self._store.update_account_by_id(user_id_or_account_id, **updates)
+        return self._store.update_account(user_id_or_account_id, account_number, **updates)
+
+    def update_account_by_id(self, account_id: str, **updates: Any):
         return self._store.update_account_by_id(account_id, **updates)
 
     def add_transaction(
+        self,
+        user_id_or_account_id: str,
+        account_number: str | None = None,
+        amount: Decimal | int | str | None = None,
+        transaction_type: str | None = None,
+        description: str | None = None,
+    ):
+        if account_number is not None:
+            return self._store.add_transaction(
+                user_id_or_account_id,
+                account_number,
+                amount,
+                transaction_type,
+                description,
+            )
+        return self._store.add_transaction_by_id(
+            user_id_or_account_id,
+            amount=amount,
+            transaction_type=transaction_type,
+            description=description,
+        )
+
+    def add_transaction_by_id(
         self,
         account_id: str,
         *,
@@ -55,13 +93,28 @@ class BankAccountStore:
             description=description,
         )
 
-    def list_transactions(self, account_id: str):
+    def list_transactions(self, user_id_or_account_id: str, account_number: str | None = None):
+        if account_number is not None:
+            return self._store.list_transactions(user_id_or_account_id, account_number)
+        return self._store.list_transactions_by_id(user_id_or_account_id)
+
+    def list_transactions_by_id(self, account_id: str):
         return self._store.list_transactions_by_id(account_id)
 
-    def get_status_history(self, account_id: str):
+    def get_status_history(self, user_id_or_account_id: str, account_number: str | None = None):
+        if account_number is not None:
+            return self._store.get_status_history(user_id_or_account_id, account_number)
+        return self._store.get_status_history_by_id(user_id_or_account_id)
+
+    def get_status_history_by_id(self, account_id: str):
         return self._store.get_status_history_by_id(account_id)
 
-    def get_balance_status(self, account_id: str):
+    def get_balance_status(self, user_id_or_account_id: str, account_number: str | None = None):
+        if account_number is not None:
+            return self._store.get_balance_status(user_id_or_account_id, account_number)
+        return self._store.get_balance_status_by_id(user_id_or_account_id)
+
+    def get_balance_status_by_id(self, account_id: str):
         return self._store.get_balance_status_by_id(account_id)
 
 
