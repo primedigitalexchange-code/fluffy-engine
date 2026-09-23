@@ -68,6 +68,11 @@ class BankAccountsModuleTests(unittest.TestCase):
         )
         self.assertEqual(status_code, 200)
         self.assertEqual(payload["account"]["status"], "active")
+        history = self.store.get_status_history(self.account.account_id)
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[-1].old_status, AccountStatus.SUSPENDED)
+        self.assertEqual(history[-1].new_status, AccountStatus.ACTIVE)
+        self.assertEqual(history[-1].reason, "manual review passed")
 
     def test_endpoints_enforce_ownership_and_masked_account_numbers(self) -> None:
         status_code, payload = handle_request(

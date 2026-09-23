@@ -29,6 +29,7 @@ class BankAccountStore:
         self._lock = RLock()
         self._accounts_by_id: dict[str, BankAccount] = {}
         self._account_ids_by_user: dict[str, list[str]] = {}
+        self._account_numbers_by_user: dict[str, set[str]] = {}
         self._transactions_by_account: dict[str, list[AccountTransaction]] = {}
         self._status_history_by_account: dict[str, list[AccountStatusChange]] = {}
 
@@ -56,11 +57,7 @@ class BankAccountStore:
         normalized_status = _validate_status(status)
 
         with self._lock:
-            if any(
-                account.account_number == normalized_account_number
-                for account_id in self._account_ids_by_user.get(normalized_user_id, [])
-                if (account := self._accounts_by_id.get(account_id)) is not None
-            ):
+            if normalized_account_number in self._account_numbers_by_user.get(normalized_user_id, set()):
                 raise ValidationError("account number already exists for this user")
 
             timestamp = utc_now()
@@ -77,6 +74,7 @@ class BankAccountStore:
             )
             self._accounts_by_id[account.account_id] = account
             self._account_ids_by_user.setdefault(account.user_id, []).append(account.account_id)
+            self._account_numbers_by_user.setdefault(account.user_id, set()).add(account.account_number)
             self._transactions_by_account[account.account_id] = []
             self._status_history_by_account[account.account_id] = []
             return account

@@ -92,7 +92,6 @@ def _ensure_ownership(*, requesting_user_id: str, owner_user_id: str) -> None:
 def _serialize_account(account: BankAccount) -> dict[str, Any]:
     return {
         "account_id": account.account_id,
-        "user_id": account.user_id,
         "masked_account_number": account.masked_account_number,
         "account_type": account.account_type,
         "balance": _serialize_decimal(account.balance),
