@@ -121,7 +121,11 @@ class BankAccountStore:
         with self._lock:
             account = self.get_account(account_id)
             updates: dict[str, Any] = {}
-            normalized_reason = _clean_optional_reason(status_reason) if status_reason is not None else None
+            normalized_reason = (
+                _clean_optional_reason(status_reason, field_name="status_reason")
+                if status_reason is not None
+                else None
+            )
 
             if normalized_reason is not None and status is None:
                 raise ValidationError("status_reason can only be provided with a status update")
@@ -175,7 +179,7 @@ class BankAccountStore:
             raise ValidationError("transaction_type must be deposit, withdrawal, or transfer")
 
         normalized_amount = _validate_money(amount, field_name="amount", allow_zero=False)
-        clean_description = _clean_optional_reason(description)
+        clean_description = _clean_optional_reason(description, field_name="description")
 
         with self._lock:
             account = self.get_account(account_id)
@@ -278,10 +282,10 @@ def _validate_money(value: Any, *, field_name: str, allow_zero: bool) -> Decimal
     return quantized
 
 
-def _clean_optional_reason(reason: Any) -> str | None:
-    if reason is None:
+def _clean_optional_reason(value: Any, *, field_name: str) -> str | None:
+    if value is None:
         return None
-    cleaned = _require_non_empty("reason", reason)
+    cleaned = _require_non_empty(field_name, value)
     return cleaned
 
 
@@ -293,5 +297,5 @@ def _validate_status_transition(
     if old_status == new_status:
         return
     if old_status == AccountStatus.SUSPENDED and new_status == AccountStatus.ACTIVE:
-        if _clean_optional_reason(status_reason) is None:
+        if _clean_optional_reason(status_reason, field_name="status_reason") is None:
             raise ValidationError("status_reason is required to reactivate a suspended account")
