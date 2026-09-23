@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import base64
 from decimal import Decimal
+import hashlib
+import json
 import unittest
 
+import jwt
 from fastapi.testclient import TestClient
 
 from bank_account import BankAccountStore
@@ -11,6 +15,9 @@ from banking_connector import (
     BankingAuthenticationError,
     ConnectedBankSession,
     LiveBankAccountData,
+    TransferAuthorizationResult,
+    TransferCreationResult,
+    TransferStatusResult,
 )
 from webapp.app import AUTH_COOKIE_NAME, create_app
 
@@ -20,6 +27,14 @@ class FakePlaidConnector:
         self.link_token_calls: list[str] = []
         self.connected: list[tuple[str, str]] = []
         self.transaction_calls: list[dict[str, object]] = []
+        self.authorization_calls: list[dict[str, object]] = []
+        self.transfer_create_calls: list[dict[str, object]] = []
+        self.transfer_get_calls: list[str] = []
+        self.authorization_decision = "approved"
+        self.authorization_rationale = "approved"
+        self.transfer_status = "pending"
+        self.transfer_network = "ach"
+        self.webhook_secret = "webhook-secret"
 
     def create_link_token(self, *, user_id: str) -> dict[str, str]:
         self.link_token_calls.append(user_id)
@@ -71,6 +86,40 @@ class FakePlaidConnector:
             )()
         ]
 
+    def create_transfer_authorization(self, **kwargs):
+        self.authorization_calls.append(kwargs)
+        return TransferAuthorizationResult(
+            authorization_id="authorization-1",
+            decision=self.authorization_decision,
+            decision_rationale=self.authorization_rationale,
+        )
+
+    def create_transfer(self, **kwargs):
+        self.transfer_create_calls.append(kwargs)
+        return TransferCreationResult(
+            transfer_id="transfer-1",
+            status=self.transfer_status,
+            ach_class=kwargs["ach_class"],
+            network=self.transfer_network,
+        )
+
+    def get_transfer_status(self, transfer_id: str):
+        self.transfer_get_calls.append(transfer_id)
+        return TransferStatusResult(
+            transfer_id=transfer_id,
+            status="posted",
+            ach_class="web",
+            network="ach",
+        )
+
+    def get_webhook_verification_key(self, key_id: str):
+        encoded_secret = base64.urlsafe_b64encode(self.webhook_secret.encode("utf-8")).decode("utf-8").rstrip("=")
+        return {"kty": "oct", "kid": key_id, "alg": "HS256", "k": encoded_secret}
+
+
+def json_bytes(payload: dict[str, object]) -> bytes:
+    return json.dumps(payload, separators=(",", ":")).encode("utf-8")
+
 
 class WebAppTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -81,6 +130,11 @@ class WebAppTests(unittest.TestCase):
             "APP_PASSWORD": "demo-password",
             "APP_JWT_SECRET": "test-jwt-secret",
             "APP_CORS_ORIGINS": "http://localhost:3000,http://127.0.0.1:8000",
+            "FLUFFY_ENGINE_BANK_DATA_MODE": "live",
+            "FLUFFY_ENGINE_ENABLE_LIVE_TRANSFERS": "true",
+            "PLAID_WEBHOOK_URL": "https://example.com/webhooks/plaid/transfer",
+            "PLAID_WEBHOOK_AUDIENCE": "https://example.com/webhooks/plaid/transfer",
+            "FLUFFY_ENGINE_TRANSFER_STATUS_STALE_SECONDS": "300",
         }
         app = create_app(
             env=self.env,
@@ -97,6 +151,24 @@ class WebAppTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         return response.json()
+
+    def link_live_account(self) -> str:
+        exchange_response = self.client.post(
+            "/bank/exchange-token",
+            json={"public_token": "public-sandbox-token"},
+        )
+        self.assertEqual(exchange_response.status_code, 200)
+        return exchange_response.json()["accounts"][0]["account_id"]
+
+    def signed_webhook(self, payload: dict[str, object], *, kid: str = "kid-1") -> str:
+        payload_bytes = json_bytes(payload)
+        claims = {
+            "aud": self.env["PLAID_WEBHOOK_AUDIENCE"],
+            "request_body_sha256": hashlib.sha256(payload_bytes).hexdigest(),
+            "iat": int(datetime.now(UTC).timestamp()),
+            "exp": int((datetime.now(UTC) + timedelta(minutes=5)).timestamp()),
+        }
+        return jwt.encode(claims, self.connector.webhook_secret, algorithm="HS256", headers={"kid": kid})
 
     def test_login_sets_cookie_and_returns_bearer_token(self) -> None:
         response = self.client.post(
@@ -244,6 +316,272 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["source"], "in-memory")
         self.assertEqual(response.json()["transactions"][0]["name"], "Deposit")
+
+    def test_live_transfer_creation_returns_safe_receipt(self) -> None:
+        self.login()
+        source_account_id = self.link_live_account()
+        destination = self.store.create_account(
+            user_id="recipient",
+            account_number="000999888777",
+            account_type="checking",
+            balance="0.00",
+        )
+
+        response = self.client.post(
+            "/bank/transfers",
+            json={
+                "source_account_id": source_account_id,
+                "destination_user_id": "recipient",
+                "destination_account_id": destination.account_number,
+                "amount": "10.00",
+                "ach_class": "web",
+                "idempotency_key": "idem-transfer-1",
+                "memo": "Payroll",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        transfer = response.json()["transfer"]
+        self.assertEqual(transfer["status"], "pending")
+        self.assertEqual(transfer["authorization_id"], "authorization-1")
+        self.assertEqual(transfer["transfer_id"], "transfer-1")
+        self.assertTrue(transfer["source_account"].startswith("****"))
+        self.assertEqual(len(self.connector.transfer_create_calls), 1)
+
+    def test_live_transfer_declined_authorization_is_persisted_without_transfer_creation(self) -> None:
+        self.login()
+        source_account_id = self.link_live_account()
+        self.connector.authorization_decision = "declined"
+        self.connector.authorization_rationale = "risk_review"
+        destination = self.store.create_account(
+            user_id="recipient",
+            account_number="000999888776",
+            account_type="checking",
+            balance="0.00",
+        )
+
+        response = self.client.post(
+            "/bank/transfers",
+            json={
+                "source_account_id": source_account_id,
+                "destination_user_id": "recipient",
+                "destination_account_id": destination.account_number,
+                "amount": "10.00",
+                "ach_class": "ppd",
+                "idempotency_key": "idem-transfer-2",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        transfer = response.json()["transfer"]
+        self.assertEqual(transfer["status"], "declined")
+        self.assertEqual(transfer["transfer_id"], None)
+        self.assertEqual(transfer["decision_rationale"], "risk_review")
+        self.assertEqual(len(self.connector.transfer_create_calls), 0)
+
+    def test_transfer_idempotency_replay_does_not_create_duplicate_plaid_transfer(self) -> None:
+        self.login()
+        source_account_id = self.link_live_account()
+        destination = self.store.create_account(
+            user_id="recipient",
+            account_number="000999888775",
+            account_type="checking",
+            balance="0.00",
+        )
+        payload = {
+            "source_account_id": source_account_id,
+            "destination_user_id": "recipient",
+            "destination_account_id": destination.account_number,
+            "amount": "10.00",
+            "ach_class": "web",
+            "idempotency_key": "idem-transfer-3",
+        }
+
+        first = self.client.post("/bank/transfers", json=payload)
+        second = self.client.post("/bank/transfers", json=payload)
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(second.json()["idempotent_replay"], True)
+        self.assertEqual(len(self.connector.transfer_create_calls), 1)
+
+    def test_transfer_webhook_valid_signature_updates_status(self) -> None:
+        self.login()
+        source_account_id = self.link_live_account()
+        destination = self.store.create_account(
+            user_id="recipient",
+            account_number="000999888774",
+            account_type="checking",
+            balance="0.00",
+        )
+        create_response = self.client.post(
+            "/bank/transfers",
+            json={
+                "source_account_id": source_account_id,
+                "destination_user_id": "recipient",
+                "destination_account_id": destination.account_number,
+                "amount": "10.00",
+                "ach_class": "web",
+                "idempotency_key": "idem-transfer-4",
+            },
+        )
+        payment_id = create_response.json()["transfer"]["payment_id"]
+        posted_payload = {"event": {"transfer_id": "transfer-1", "event_type": "posted"}}
+
+        webhook_response = self.client.post(
+            "/webhooks/plaid/transfer",
+            data=json_bytes(posted_payload),
+            headers={
+                "Content-Type": "application/json",
+                "Plaid-Verification": self.signed_webhook(posted_payload),
+            },
+        )
+        status_response = self.client.get(f"/bank/transfers/{payment_id}")
+
+        self.assertEqual(webhook_response.status_code, 200)
+        self.assertEqual(webhook_response.json()["status"], "processed")
+        self.assertEqual(status_response.json()["transfer"]["status"], "posted")
+
+    def test_transfer_webhook_rejects_tampered_payload(self) -> None:
+        self.login()
+        self.link_live_account()
+        payload = {"event": {"transfer_id": "transfer-1", "event_type": "posted"}}
+        tampered_payload = {"event": {"transfer_id": "transfer-1", "event_type": "failed"}}
+        signature = self.signed_webhook(payload)
+
+        response = self.client.post(
+            "/webhooks/plaid/transfer",
+            data=json_bytes(tampered_payload),
+            headers={"Content-Type": "application/json", "Plaid-Verification": signature},
+        )
+
+        self.assertEqual(response.status_code, 401)
+
+    def test_transfer_webhook_updates_status_to_returned(self) -> None:
+        self.login()
+        source_account_id = self.link_live_account()
+        destination = self.store.create_account(
+            user_id="recipient",
+            account_number="000999888771",
+            account_type="checking",
+            balance="0.00",
+        )
+        create_response = self.client.post(
+            "/bank/transfers",
+            json={
+                "source_account_id": source_account_id,
+                "destination_user_id": "recipient",
+                "destination_account_id": destination.account_number,
+                "amount": "10.00",
+                "ach_class": "web",
+                "idempotency_key": "idem-transfer-returned",
+            },
+        )
+        payment_id = create_response.json()["transfer"]["payment_id"]
+        returned_payload = {"event": {"transfer_id": "transfer-1", "event_type": "returned"}}
+        self.client.post(
+            "/webhooks/plaid/transfer",
+            data=json_bytes(returned_payload),
+            headers={
+                "Content-Type": "application/json",
+                "Plaid-Verification": self.signed_webhook(returned_payload),
+            },
+        )
+
+        status_response = self.client.get(f"/bank/transfers/{payment_id}")
+        self.assertEqual(status_response.status_code, 200)
+        self.assertEqual(status_response.json()["transfer"]["status"], "returned")
+
+    def test_transfer_status_endpoint_refreshes_stale_pending_transfer(self) -> None:
+        self.login()
+        source_account_id = self.link_live_account()
+        destination = self.store.create_account(
+            user_id="recipient",
+            account_number="000999888773",
+            account_type="checking",
+            balance="0.00",
+        )
+        create_response = self.client.post(
+            "/bank/transfers",
+            json={
+                "source_account_id": source_account_id,
+                "destination_user_id": "recipient",
+                "destination_account_id": destination.account_number,
+                "amount": "10.00",
+                "ach_class": "web",
+                "idempotency_key": "idem-transfer-5",
+            },
+        )
+        payment_id = create_response.json()["transfer"]["payment_id"]
+        self.store.update_live_transfer(
+            payment_id,
+            updated_at=datetime.now(UTC) - timedelta(hours=1),
+        )
+        status_response = self.client.get(f"/bank/transfers/{payment_id}")
+
+        self.assertEqual(status_response.status_code, 200)
+        self.assertEqual(status_response.json()["transfer"]["status"], "posted")
+        self.assertEqual(self.connector.transfer_get_calls, ["transfer-1"])
+
+    def test_live_transfer_request_is_rejected_when_feature_disabled(self) -> None:
+        env = dict(self.env)
+        env["FLUFFY_ENGINE_ENABLE_LIVE_TRANSFERS"] = "false"
+        app = create_app(env=env, account_store=self.store, connector_factory=lambda: self.connector)
+        client = TestClient(app)
+        client.post("/auth/login", json={"username": "demo-user", "password": "demo-password"})
+        exchange = client.post("/bank/exchange-token", json={"public_token": "public-sandbox-token"})
+        destination = self.store.create_account(
+            user_id="recipient",
+            account_number="000999888772",
+            account_type="checking",
+            balance="0.00",
+        )
+
+        response = client.post(
+            "/bank/transfers",
+            json={
+                "source_account_id": exchange.json()["accounts"][0]["account_id"],
+                "destination_user_id": "recipient",
+                "destination_account_id": destination.account_number,
+                "amount": "10.00",
+                "ach_class": "web",
+                "idempotency_key": "idem-transfer-6",
+            },
+        )
+
+        self.assertEqual(response.status_code, 503)
+
+    def test_non_live_transfer_still_uses_in_memory_path(self) -> None:
+        self.login()
+        source = self.store.create_account(
+            user_id="demo-user",
+            account_number="000555444333",
+            account_type="checking",
+            balance="15.00",
+        )
+        destination = self.store.create_account(
+            user_id="recipient",
+            account_number="000111000999",
+            account_type="checking",
+            balance="1.00",
+        )
+
+        response = self.client.post(
+            "/bank/transfers",
+            json={
+                "source_account_id": source.account_number,
+                "destination_user_id": "recipient",
+                "destination_account_id": destination.account_number,
+                "amount": "5.00",
+                "ach_class": "web",
+                "idempotency_key": "idem-demo-1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["transfer"]["data_source"], "in-memory")
+        self.assertEqual(self.store.get_account("demo-user", source.account_number).balance, Decimal("10.00"))
+        self.assertEqual(self.store.get_account("recipient", destination.account_number).balance, Decimal("6.00"))
 
     def test_connector_errors_map_to_gateway_errors(self) -> None:
         class FailingConnector(FakePlaidConnector):

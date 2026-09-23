@@ -33,6 +33,18 @@ export BANKING_TOKEN_ENCRYPTION_KEY='your-fernet-or-derived-key'
 
 Start with `PLAID_ENV=sandbox` for testing.
 
+Live transfer mode (Plaid Transfer):
+
+```bash
+export FLUFFY_ENGINE_ENABLE_LIVE_TRANSFERS=true
+export PLAID_WEBHOOK_URL='https://your-public-host/webhooks/plaid/transfer'
+export PLAID_WEBHOOK_AUDIENCE='https://your-public-host/webhooks/plaid/transfer'
+export FLUFFY_ENGINE_TRANSFER_STATUS_STALE_SECONDS=300
+```
+
+If `FLUFFY_ENGINE_ENABLE_LIVE_TRANSFERS=true`, the app fails closed when required
+transfer configuration is missing.
+
 ## Run
 
 ```bash
@@ -47,7 +59,22 @@ Open <http://localhost:8000/> for the login page.
 - `POST /bank/link-token` and `POST /bank/exchange-token` are authenticated and use the existing `PlaidConnector` helpers.
 - Connected accounts are persisted only in the in-memory `BankAccountStore` for the lifetime of the process.
 - `GET /bank/accounts/{account_id}/transactions` attempts live Plaid transaction history for linked live accounts and falls back to in-memory transactions when no live account metadata is available.
+- `POST /bank/transfers` creates transfers. Mock/non-live source accounts use the
+  demo in-memory mutation path. Live source accounts use Plaid Transfer
+  authorization first, then Plaid transfer creation only when approved.
+- `GET /bank/transfers/{payment_id}` returns the transfer ledger status and can
+  refresh stale pending/authorized statuses from Plaid `/transfer/get`.
+- `POST /webhooks/plaid/transfer` verifies Plaid webhook signatures using Plaid
+  webhook verification keys before applying status transitions.
 - Plaid Link handles bank credentials in the browser; this app does not collect raw bank usernames or passwords.
+
+Transfer lifecycle:
+
+- Authorization decisions are persisted (`approved`, `declined`, or
+  `review_required`) with rationale.
+- A transfer is not treated as settled on creation; it remains pending/authorized
+  until Plaid confirms status updates (for example `posted`, `failed`,
+  `returned`, or `cancelled`) via webhook or status refresh.
 
 ## Non-production warning
 
@@ -59,6 +86,8 @@ This demo is intentionally **not production-ready**. Production deployment requi
 - CSRF defenses and rate limiting at the web layer
 - stronger user management than a single env-backed username/password
 - operational monitoring and audit controls appropriate for financial data
+- Plaid Transfer production approval before processing real money; use sandbox and
+  simulation flows until approved
 
 ## Tests
 

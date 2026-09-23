@@ -92,6 +92,18 @@ export BANKING_RATE_LIMIT_PER_MINUTE=30
 export BANKING_LOG_LEVEL=INFO
 ```
 
+To enable Plaid Transfer-backed live payments in the FastAPI demo, also set:
+
+```bash
+export FLUFFY_ENGINE_ENABLE_LIVE_TRANSFERS=true
+export PLAID_WEBHOOK_URL='https://your-public-host/webhooks/plaid/transfer'
+export PLAID_WEBHOOK_AUDIENCE='https://your-public-host/webhooks/plaid/transfer'
+export FLUFFY_ENGINE_TRANSFER_STATUS_STALE_SECONDS=300
+```
+
+When live transfers are enabled, the app fails closed if transfer-specific config
+is missing.
+
 If your application also needs its own runtime login separate from Plaid, provide
 it through environment variables instead of hardcoding secrets in the repository:
 
@@ -174,6 +186,10 @@ for transaction in transactions:
 - **Compliance**: if you persist live tokens or account metadata in production,
   move the encrypted store behind a KMS/HSM-backed secret vault and review your
   NACHA, PCI-DSS, and privacy obligations before launch.
+- **Transfer settlement status**: do not treat transfer creation as settlement.
+  Keep payments pending/authorized until Plaid confirms final transfer status
+  (`posted`, `failed`, `returned`, `cancelled`) via webhook or transfer-status
+  reconciliation.
 
 ## Limitations
 
@@ -184,3 +200,5 @@ for transaction in transactions:
   not include `bank_address`, `city`, `state`, or `postal_code`.
 - The included tests mock Plaid responses; live integration tests require your
   own Plaid credentials and are intentionally left commented out.
+- Real-money Plaid Transfer usage requires Plaid Transfer production approval.
+  Until approved, use sandbox/simulated transfer flows only.
