@@ -1,6 +1,6 @@
-"""Public exports for the bank account module."""
+"""Compatibility package for the canonical bank_account implementation."""
 
-from .module import (
+from bank_account import (
     APIError,
     AccountStatus,
     AccountStatusChange,

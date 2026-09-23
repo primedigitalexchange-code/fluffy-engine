@@ -18,11 +18,22 @@ Generate a synthetic US bank profile:
 python bank_profile.py
 ```
 
-## Bank account module
+## Canonical account-management API
 
-The in-memory `bank_account` module stores either mock or live account records.
-Each `BankAccount` now includes a `data_source` field so callers can distinguish
-between synthetic and production-linked accounts.
+`bank_account` is the canonical account-management module in this repository.
+It provides:
+
+- in-memory bank account storage with per-account UUIDs;
+- lifecycle status handling (`active`, `inactive`, `suspended`);
+- strict validation for account numbers, routing numbers, bank profile fields,
+  currencies, and money values;
+- ownership-aware lookup helpers and HTTP-style request handling;
+- transaction and status-change audit history;
+- deterministic serialization that exposes only masked account numbers.
+
+The separate `bank_accounts` package is a **compatibility wrapper** that
+re-exports the same canonical implementation for callers that adopted the draft
+package name. It does not implement a second storage system.
 
 ### Create an account from mock data
 
@@ -39,6 +50,8 @@ account = create_account_from_mock_data(
     account_type="checking",
 )
 
+print(account.account_id)
+print(account.masked_account_number)  # "********6789"
 print(account.data_source.value)  # "mock"
 ```
 
@@ -65,6 +78,49 @@ linked_account = create_account_from_live_api(
 
 print(linked_account.data_source.value)  # "live"
 print(linked_account.bank_name)
+```
+
+### Framework-neutral request handler
+
+```python
+from bank_account import BankAccountStore, handle_request
+
+store = BankAccountStore()
+account = store.create_account(
+    user_id="user-123",
+    account_number="123456789012",
+    account_type="checking",
+    balance="150.25",
+)
+
+status_code, payload = handle_request(
+    store,
+    method="GET",
+    path=f"/accounts/{account.account_id}/balance",
+    user_id="user-123",
+)
+
+print(status_code)  # 200
+print(payload)
+# {'account_id': '...', 'masked_account_number': '********9012', 'balance': '150.25', 'currency': 'USD', 'status': 'active'}
+```
+
+Supported routes:
+
+- `GET /accounts/<account_id>`
+- `PATCH /accounts/<account_id>`
+- `GET /users/<user_id>/accounts`
+- `GET /accounts/<account_id>/balance`
+- `GET /accounts/<account_id>/status`
+
+### Audit history helpers
+
+```python
+from bank_account import get_account_audit_history
+
+history = get_account_audit_history(store, "user-123", "123456789012")
+print(history["transactions"])
+print(history["status_changes"])
 ```
 
 ## Live banking setup
@@ -159,6 +215,14 @@ for transaction in transactions:
     print(transaction.posted_on, transaction.name, transaction.amount)
 ```
 
+## Tests
+
+Run the complete test suite with:
+
+```bash
+python -m unittest discover -s tests -q
+```
+
 ## Security and compliance notes
 
 - **No hardcoded banking credentials**: live credentials are read only from
@@ -167,6 +231,8 @@ for transaction in transactions:
   `cryptography.fernet` before storage.
 - **No credential handling in app code**: end users authenticate through Plaid
   Link, so this code never collects raw online-banking usernames or passwords.
+- **Masked account serialization**: helper responses and HTTP-style handlers
+  expose only masked account numbers, never raw account numbers.
 - **Rate limiting**: outbound Plaid calls are throttled per configured
   `BANKING_RATE_LIMIT_PER_MINUTE`.
 - **Audit logging**: connector logging records which Plaid endpoints were used
@@ -175,8 +241,12 @@ for transaction in transactions:
   move the encrypted store behind a KMS/HSM-backed secret vault and review your
   NACHA, PCI-DSS, and privacy obligations before launch.
 
-## Limitations
+## Limitations and production-readiness caveats
 
+- `BankAccountStore` is **in-memory only**. Accounts, balances, transactions,
+  and audit history are lost when the process exits.
+- The account store uses an in-process lock for thread safety, but it is not a
+  substitute for durable database transactions or distributed coordination.
 - Plaid does not expose a traditional OAuth refresh token for Auth; the
   connector therefore rotates access tokens using
   `/item/access_token/invalidate`.
@@ -184,3 +254,7 @@ for transaction in transactions:
   not include `bank_address`, `city`, `state`, or `postal_code`.
 - The included tests mock Plaid responses; live integration tests require your
   own Plaid credentials and are intentionally left commented out.
+- This repository is suitable for local development, demos, and integration
+  scaffolding, but it is **not production-ready** without durable storage,
+  access controls at the application boundary, monitoring, secret management,
+  and compliance review.
