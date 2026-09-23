@@ -364,6 +364,97 @@ class BankAccountStore:
         except KeyError as exc:
             raise NotFoundError("account not found") from exc
 
+    def _get_account_by_id_unlocked(self, account_id: str) -> BankAccount:
+        return self._get_account_unlocked(self._get_account_key_for_id_unlocked(account_id))
+
+    def _normalize_updates(self, updates: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
+        unknown_fields = set(updates) - set(_UPDATABLE_ACCOUNT_FIELDS)
+        if unknown_fields:
+            unknown = ", ".join(sorted(unknown_fields))
+            raise ValidationError(f"unsupported update field(s): {unknown}")
+
+        normalized_updates: dict[str, Any] = {}
+        if "account_type" in updates:
+            normalized_updates["account_type"] = _validate_account_type(updates["account_type"])
+        if "status" in updates:
+            normalized_updates["status"] = _validate_status(updates["status"])
+        if "data_source" in updates:
+            normalized_updates["data_source"] = _validate_data_source(updates["data_source"])
+        if "currency" in updates:
+            normalized_updates["currency"] = _validate_currency(updates["currency"])
+
+        normalized_reason = None
+        if "status_reason" in updates:
+            normalized_reason = _validate_optional_string("status_reason", updates["status_reason"])
+            if "status" not in updates:
+                raise ValidationError("status_reason can only be provided with a status update")
+
+        normalized_updates.update(_normalize_bank_details(updates))
+        normalized_updates.update(_normalize_live_metadata(updates))
+        return normalized_updates, normalized_reason
+
+    def _apply_account_update_unlocked(
+        self,
+        account_key: tuple[str, str],
+        normalized_updates: dict[str, Any],
+        normalized_reason: str | None,
+    ) -> BankAccount:
+        account = self._get_account_unlocked(account_key)
+        if "status" in normalized_updates:
+            _validate_status_transition(account.status, normalized_updates["status"], normalized_reason)
+        if not normalized_updates:
+            raise ValidationError("at least one updatable field is required")
+        applied_updates = dict(normalized_updates)
+        applied_updates["updated_at"] = _utc_now()
+        updated_account = replace(account, **applied_updates)
+        _validate_live_requirements(updated_account)
+        self._accounts[account_key] = updated_account
+        if "status" in applied_updates and applied_updates["status"] != account.status:
+            self._status_history[account_key].append(
+                AccountStatusChange(
+                    account_id=account.account_id,
+                    account_number=account.account_number,
+                    old_status=account.status,
+                    new_status=applied_updates["status"],
+                    changed_at=updated_account.updated_at or applied_updates["updated_at"],
+                    reason=normalized_reason,
+                )
+            )
+        return updated_account
+
+    def _apply_transaction_unlocked(
+        self,
+        account_key: tuple[str, str],
+        amount_decimal: Decimal,
+        normalized_transaction_type: str,
+        description_text: str | None,
+    ) -> AccountTransaction:
+        account = self._get_account_unlocked(account_key)
+        if account.status != AccountStatus.ACTIVE:
+            raise ValidationError("account must be active to process transactions")
+        new_balance = account.balance + amount_decimal
+        if normalized_transaction_type == "withdrawal":
+            new_balance = account.balance - amount_decimal
+            if new_balance < Decimal("0.00"):
+                raise ValidationError("insufficient funds")
+
+        timestamp = _utc_now()
+        updated_account = replace(account, balance=new_balance, updated_at=timestamp)
+        self._accounts[account_key] = updated_account
+
+        transaction = AccountTransaction(
+            transaction_id=str(uuid4()),
+            account_id=updated_account.account_id,
+            account_number=updated_account.account_number,
+            amount=amount_decimal,
+            transaction_type=normalized_transaction_type,
+            created_at=timestamp,
+            resulting_balance=updated_account.balance,
+            description=description_text,
+        )
+        self._transactions[account_key].append(transaction)
+        return transaction
+
     def create_account(
         self,
         *,
@@ -513,72 +604,32 @@ class BankAccountStore:
     def get_account_by_id(self, account_id: str) -> BankAccount:
         normalized_account_id = _validate_required_string("account_id", account_id)
         with self._lock:
-            account_key = self._get_account_key_for_id_unlocked(normalized_account_id)
-            return self._get_account_unlocked(account_key)
+            return self._get_account_by_id_unlocked(normalized_account_id)
 
     def get_owned_account_by_id(self, user_id: str, account_id: str) -> BankAccount:
         normalized_user_id = _validate_required_string("user_id", user_id)
+        normalized_account_id = _validate_required_string("account_id", account_id)
         with self._lock:
-            account = self.get_account_by_id(account_id)
+            account = self._get_account_by_id_unlocked(normalized_account_id)
             if account.user_id != normalized_user_id:
                 raise NotFoundError("account not found")
             return account
 
     def update_account(self, user_id: str, account_number: str, **updates: Any) -> BankAccount:
-        unknown_fields = set(updates) - set(_UPDATABLE_ACCOUNT_FIELDS)
-        if unknown_fields:
-            unknown = ", ".join(sorted(unknown_fields))
-            raise ValidationError(f"unsupported update field(s): {unknown}")
-
-        normalized_updates: dict[str, Any] = {}
-        if "account_type" in updates:
-            normalized_updates["account_type"] = _validate_account_type(updates["account_type"])
-        if "status" in updates:
-            normalized_updates["status"] = _validate_status(updates["status"])
-        if "data_source" in updates:
-            normalized_updates["data_source"] = _validate_data_source(updates["data_source"])
-        if "currency" in updates:
-            normalized_updates["currency"] = _validate_currency(updates["currency"])
-
-        normalized_reason = None
-        if "status_reason" in updates:
-            normalized_reason = _validate_optional_string("status_reason", updates["status_reason"])
-            if "status" not in updates:
-                raise ValidationError("status_reason can only be provided with a status update")
-
-        normalized_updates.update(_normalize_bank_details(updates))
-        normalized_updates.update(_normalize_live_metadata(updates))
-
+        normalized_updates, normalized_reason = self._normalize_updates(updates)
         account_key = (
             _validate_required_string("user_id", user_id),
             _validate_account_number(account_number),
         )
         with self._lock:
-            account = self._get_account_unlocked(account_key)
-            if "status" in normalized_updates:
-                _validate_status_transition(account.status, normalized_updates["status"], normalized_reason)
-            if not normalized_updates:
-                raise ValidationError("at least one updatable field is required")
-            normalized_updates["updated_at"] = _utc_now()
-            updated_account = replace(account, **normalized_updates)
-            _validate_live_requirements(updated_account)
-            self._accounts[account_key] = updated_account
-            if "status" in normalized_updates and normalized_updates["status"] != account.status:
-                self._status_history[account_key].append(
-                    AccountStatusChange(
-                        account_id=account.account_id,
-                        account_number=account.account_number,
-                        old_status=account.status,
-                        new_status=normalized_updates["status"],
-                        changed_at=updated_account.updated_at or normalized_updates["updated_at"],
-                        reason=normalized_reason,
-                    )
-                )
-            return updated_account
+            return self._apply_account_update_unlocked(account_key, normalized_updates, normalized_reason)
 
     def update_account_by_id(self, account_id: str, **updates: Any) -> BankAccount:
-        account = self.get_account_by_id(account_id)
-        return BankAccountStore.update_account(self, account.user_id, account.account_number, **updates)
+        normalized_account_id = _validate_required_string("account_id", account_id)
+        normalized_updates, normalized_reason = self._normalize_updates(updates)
+        with self._lock:
+            account_key = self._get_account_key_for_id_unlocked(normalized_account_id)
+            return self._apply_account_update_unlocked(account_key, normalized_updates, normalized_reason)
 
     def add_transaction(
         self,
@@ -599,31 +650,12 @@ class BankAccountStore:
             _validate_account_number(account_number),
         )
         with self._lock:
-            account = self._get_account_unlocked(account_key)
-            if account.status != AccountStatus.ACTIVE:
-                raise ValidationError("account must be active to process transactions")
-            new_balance = account.balance + amount_decimal
-            if normalized_transaction_type == "withdrawal":
-                new_balance = account.balance - amount_decimal
-                if new_balance < Decimal("0.00"):
-                    raise ValidationError("insufficient funds")
-
-            timestamp = _utc_now()
-            updated_account = replace(account, balance=new_balance, updated_at=timestamp)
-            self._accounts[account_key] = updated_account
-
-            transaction = AccountTransaction(
-                transaction_id=str(uuid4()),
-                account_id=updated_account.account_id,
-                account_number=updated_account.account_number,
-                amount=amount_decimal,
-                transaction_type=normalized_transaction_type,
-                created_at=timestamp,
-                resulting_balance=updated_account.balance,
-                description=description_text,
+            return self._apply_transaction_unlocked(
+                account_key,
+                amount_decimal,
+                normalized_transaction_type,
+                description_text,
             )
-            self._transactions[account_key].append(transaction)
-            return transaction
 
     def add_transaction_by_id(
         self,
@@ -633,15 +665,20 @@ class BankAccountStore:
         transaction_type: str,
         description: str | None = None,
     ) -> AccountTransaction:
-        account = self.get_account_by_id(account_id)
-        return BankAccountStore.add_transaction(
-            self,
-            account.user_id,
-            account.account_number,
-            amount,
-            transaction_type,
-            description,
-        )
+        normalized_account_id = _validate_required_string("account_id", account_id)
+        normalized_transaction_type = _validate_required_string("transaction_type", transaction_type).lower()
+        if normalized_transaction_type not in {"deposit", "withdrawal"}:
+            raise ValidationError("transaction_type must be deposit or withdrawal")
+        amount_decimal = _validate_money("amount", amount, allow_zero=False)
+        description_text = _validate_optional_string("description", description)
+        with self._lock:
+            account_key = self._get_account_key_for_id_unlocked(normalized_account_id)
+            return self._apply_transaction_unlocked(
+                account_key,
+                amount_decimal,
+                normalized_transaction_type,
+                description_text,
+            )
 
     def list_transactions(self, user_id: str, account_number: str) -> list[AccountTransaction]:
         account_key = (
@@ -653,8 +690,10 @@ class BankAccountStore:
             return list(self._transactions[(account.user_id, account.account_number)])
 
     def list_transactions_by_id(self, account_id: str) -> list[AccountTransaction]:
-        account = self.get_account_by_id(account_id)
-        return BankAccountStore.list_transactions(self, account.user_id, account.account_number)
+        normalized_account_id = _validate_required_string("account_id", account_id)
+        with self._lock:
+            account_key = self._get_account_key_for_id_unlocked(normalized_account_id)
+            return list(self._transactions[account_key])
 
     def get_status_history(self, user_id: str, account_number: str) -> list[AccountStatusChange]:
         account_key = (
@@ -666,8 +705,10 @@ class BankAccountStore:
             return list(self._status_history[(account.user_id, account.account_number)])
 
     def get_status_history_by_id(self, account_id: str) -> list[AccountStatusChange]:
-        account = self.get_account_by_id(account_id)
-        return BankAccountStore.get_status_history(self, account.user_id, account.account_number)
+        normalized_account_id = _validate_required_string("account_id", account_id)
+        with self._lock:
+            account_key = self._get_account_key_for_id_unlocked(normalized_account_id)
+            return list(self._status_history[account_key])
 
     def get_balance_status(self, user_id: str, account_number: str) -> dict[str, str]:
         account = self.get_account(user_id, account_number)
@@ -680,8 +721,16 @@ class BankAccountStore:
         }
 
     def get_balance_status_by_id(self, account_id: str) -> dict[str, str]:
-        account = self.get_account_by_id(account_id)
-        return BankAccountStore.get_balance_status(self, account.user_id, account.account_number)
+        normalized_account_id = _validate_required_string("account_id", account_id)
+        with self._lock:
+            account = self._get_account_by_id_unlocked(normalized_account_id)
+            return {
+                "account_id": account.account_id,
+                "masked_account_number": account.masked_account_number,
+                "balance": f"{account.balance:.2f}",
+                "currency": account.currency,
+                "status": account.status.value,
+            }
 
 
 def retrieve_account(store: BankAccountStore, user_id: str, account_number: str) -> dict[str, Any]:
