@@ -121,13 +121,19 @@ class BankAccountStore:
         with self._lock:
             account = self.get_account(account_id)
             updates: dict[str, Any] = {}
+            normalized_reason = _clean_optional_reason(status_reason) if status_reason is not None else None
+
+            if normalized_reason is not None and status is None:
+                raise ValidationError("status_reason can only be provided with a status update")
 
             if account_type is not None:
                 updates["account_type"] = _validate_account_type(account_type)
 
             if status is not None:
                 new_status = _validate_status(status)
-                _validate_status_transition(account.status, new_status, status_reason)
+                if normalized_reason is not None and new_status == account.status:
+                    raise ValidationError("status_reason requires a status change")
+                _validate_status_transition(account.status, new_status, normalized_reason)
                 updates["status"] = new_status
 
             if not updates:
@@ -144,7 +150,7 @@ class BankAccountStore:
                         old_status=account.status,
                         new_status=updates["status"],
                         changed_at=updated_account.updated_at,
-                        reason=_clean_optional_reason(status_reason),
+                        reason=normalized_reason,
                     )
                 )
             return updated_account

@@ -37,7 +37,11 @@ def handle_request(
     """
 
     normalized_method = method.upper().strip()
-    parts = path.strip("/").split("/")
+    parts = path.split("/")
+    if parts and parts[0] == "":
+        parts = parts[1:]
+    if parts and parts[-1] == "":
+        parts = parts[:-1]
 
     try:
         if normalized_method == "GET" and len(parts) == 2 and parts[0] == "accounts":

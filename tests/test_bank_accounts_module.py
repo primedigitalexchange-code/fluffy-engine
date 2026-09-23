@@ -87,6 +87,20 @@ class BankAccountsModuleTests(unittest.TestCase):
         self.assertEqual(history[-1].new_status, AccountStatus.ACTIVE)
         self.assertEqual(history[-1].reason, "manual review passed")
 
+        with self.assertRaises(ValidationError):
+            self.store.update_account(
+                self.account.account_id,
+                account_type="checking",
+                status_reason="should fail without status",
+            )
+
+        with self.assertRaises(ValidationError):
+            self.store.update_account(
+                self.account.account_id,
+                status="active",
+                status_reason="should fail without transition",
+            )
+
     def test_endpoints_enforce_ownership_and_masked_account_numbers(self) -> None:
         status_code, payload = handle_request(
             self.store,
