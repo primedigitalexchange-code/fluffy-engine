@@ -1,5 +1,3 @@
-"""Plaid banking connector with environment-driven live banking support."""
-
 from __future__ import annotations
 
 import base64
@@ -27,12 +25,48 @@ except ImportError:  # pragma: no cover - exercised only when dependency is miss
         """Fallback invalid token error when cryptography is unavailable."""
 
 
-_PLAID_URLS = {
-    "sandbox": "https://sandbox.plaid.com",
-    "development": "https://development.plaid.com",
-    "production": "https://production.plaid.com",
+_APP_CREDENTIALS_ENV_VARS = {
+    "username": "APP_USERNAME",
+    "password": "APP_PASSWORD",
 }
-_TOKEN_RE = re.compile(r"\b(?:access|public|link)-[A-Za-z0-9_-]+\b")
+
+
+@dataclass(frozen=True)
+class AppCredentials:
+    username: str
+    password: str
+
+    @classmethod
+    def from_env(
+        cls,
+        env: Mapping[str, str] | None = None,
+        *,
+        username_var: str = "APP_USERNAME",
+        password_var: str = "APP_PASSWORD",
+    ) -> "AppCredentials":
+        source = os.environ if env is None else env
+        username = source.get(username_var)
+        password = source.get(password_var)
+        missing = [
+            name
+            for name, value in ((username_var, username), (password_var, password))
+            if value is None or not value.strip()
+        ]
+        if missing:
+            raise ConfigurationError(
+                f"Missing required application credential environment variables: {', '.join(missing)}"
+            )
+        return cls(
+            username=_require_string(username_var, username),
+            password=_require_string(password_var, password),
+        )
+
+    def matches(self, username: str, password: str) -> bool:
+        normalized_username = _require_string("username", username)
+        normalized_password = _require_string("password", password)
+        return (
+            normalized_username == self.username and normalized_password == self.password
+        )
 
 
 class BankingConnectorError(RuntimeError):
@@ -113,37 +147,6 @@ class BankingConfig:
             rate_limit_per_minute=rate_limit_per_minute,
             timeout_seconds=timeout_seconds,
             log_level=log_level,
-        )
-
-
-@dataclass(frozen=True)
-class AppCredentials:
-    username: str
-    password: str
-
-    @classmethod
-    def from_env(
-        cls,
-        env: Mapping[str, str] | None = None,
-        *,
-        username_var: str = "APP_USERNAME",
-        password_var: str = "APP_PASSWORD",
-    ) -> "AppCredentials":
-        source = os.environ if env is None else env
-        username = source.get(username_var)
-        password = source.get(password_var)
-        missing = [
-            name
-            for name, value in ((username_var, username), (password_var, password))
-            if value is None or not value.strip()
-        ]
-        if missing:
-            raise ConfigurationError(
-                f"Missing required application credential environment variables: {', '.join(missing)}"
-            )
-        return cls(
-            username=_require_string(username_var, username),
-            password=_require_string(password_var, password),
         )
 
 
@@ -441,6 +444,16 @@ def load_app_credentials_from_env(env: Mapping[str, str] | None = None) -> AppCr
     return AppCredentials.from_env(env)
 
 
+def verify_app_login(
+    username: str,
+    password: str,
+    env: Mapping[str, str] | None = None,
+) -> bool:
+    """Return True when the supplied app credentials match the configured environment login."""
+    credentials = AppCredentials.from_env(env)
+    return credentials.matches(username, password)
+
+
 def _normalize_fernet_key(key: str) -> bytes:
     normalized_key = _require_string("BANKING_TOKEN_ENCRYPTION_KEY", key)
     if len(normalized_key) == 44:
@@ -481,3 +494,11 @@ def _extract_http_error_message(exc: HTTPError) -> str:
 def _sanitize_message(message: str) -> str:
     redacted = _TOKEN_RE.sub("[REDACTED_TOKEN]", message)
     return redacted or "Plaid API request failed"
+
+
+_TOKEN_RE = re.compile(r"\b(?:access|public|link)-[A-Za-z0-9_-]+\b")
+_PLAID_URLS = {
+    "sandbox": "https://sandbox.plaid.com",
+    "development": "https://development.plaid.com",
+    "production": "https://production.plaid.com",
+}
