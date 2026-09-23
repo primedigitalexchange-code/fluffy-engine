@@ -24,6 +24,63 @@ The in-memory `bank_account` module stores either mock or live account records.
 Each `BankAccount` now includes a `data_source` field so callers can distinguish
 between synthetic and production-linked accounts.
 
+## Bank accounts feature module
+
+The `bank_accounts` package provides a self-contained in-memory account
+management API for local development and tests.
+
+### Usage examples
+
+```python
+from bank_accounts import BankAccountStore, handle_request
+
+store = BankAccountStore()
+created = store.create_account(
+    user_id="user-123",
+    account_number="123456789012",
+    account_type="checking",
+    balance="1200.00",
+    currency="USD",
+)
+
+# GET /users/<user_id>/accounts
+status_code, accounts_payload = handle_request(
+    store,
+    method="GET",
+    path="/users/user-123/accounts",
+    user_id="user-123",
+)
+
+# PATCH /accounts/<account_id> (status update)
+status_code, updated_payload = handle_request(
+    store,
+    method="PATCH",
+    path=f"/accounts/{created.account_id}",
+    user_id="user-123",
+    payload={"status": "inactive"},
+)
+
+# GET /accounts/<account_id>/balance
+status_code, balance_payload = handle_request(
+    store,
+    method="GET",
+    path=f"/accounts/{created.account_id}/balance",
+    user_id="user-123",
+)
+```
+
+### Endpoint summary
+
+- `GET /accounts/<account_id>`: account details (masked account number only)
+- `PATCH /accounts/<account_id>`: update account type or status
+- `GET /users/<user_id>/accounts`: list all accounts for a user
+- `GET /accounts/<account_id>/balance`: retrieve balance and status
+
+### Configuration
+
+- No database or external service configuration is required.
+- All data is kept in memory and is reset each time the process restarts.
+
 ### Create an account from mock data
 
 ```python
