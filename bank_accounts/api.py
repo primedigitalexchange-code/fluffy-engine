@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from bank_account import APIError
+from bank_account import create_account_from_live_api as canonical_create_account_from_live_api
+from bank_account import create_account_from_mock_data as canonical_create_account_from_mock_data
 from bank_account import get_account_audit_history as canonical_get_account_audit_history
 from bank_account import get_account_balance_status as canonical_get_account_balance_status
 from bank_account import handle_request as canonical_handle_request
@@ -40,8 +42,18 @@ def get_account_balance_status(store: Any, user_id: str, account_number: str):
 def get_account_audit_history(store: Any, user_id: str, account_number: str):
     return canonical_get_account_audit_history(_canonical_store(store), user_id, account_number)
 
+
+def create_account_from_mock_data(store: Any, **kwargs: Any):
+    return canonical_create_account_from_mock_data(_canonical_store(store), **kwargs)
+
+
+def create_account_from_live_api(store: Any, **kwargs: Any):
+    return canonical_create_account_from_live_api(_canonical_store(store), **kwargs)
+
 __all__ = [
     "APIError",
+    "create_account_from_live_api",
+    "create_account_from_mock_data",
     "get_account_audit_history",
     "get_account_balance_status",
     "handle_request",

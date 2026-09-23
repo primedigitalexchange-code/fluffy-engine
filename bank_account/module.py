@@ -42,6 +42,13 @@ _UPDATABLE_ACCOUNT_FIELDS = (
     *_BANK_DETAIL_FIELDS,
     *_LIVE_METADATA_FIELDS,
 )
+_CLIENT_UPDATABLE_FIELDS = (
+    "account_type",
+    "status",
+    "status_reason",
+    "currency",
+    *_BANK_DETAIL_FIELDS,
+)
 _US_STATE_CODES = {
     "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
     "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
@@ -837,7 +844,12 @@ def handle_request(
             if payload is None:
                 raise APIError(400, "payload is required")
             account = store.get_owned_account_by_id(requester, parts[1])
-            updated = store.update_account(account.user_id, account.account_number, **payload)
+            unknown_fields = set(payload) - set(_CLIENT_UPDATABLE_FIELDS)
+            if unknown_fields:
+                unknown = ", ".join(sorted(unknown_fields))
+                raise ValidationError(f"unsupported update field(s): {unknown}")
+            updates = {field_name: payload[field_name] for field_name in _CLIENT_UPDATABLE_FIELDS if field_name in payload}
+            updated = store.update_account(account.user_id, account.account_number, **updates)
             return 200, {"account": _serialize_account(updated)}
 
         if normalized_method == "GET" and len(parts) == 3 and parts[0] == "users" and parts[2] == "accounts":

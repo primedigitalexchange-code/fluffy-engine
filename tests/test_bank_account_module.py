@@ -392,6 +392,16 @@ class BankAccountStoreTests(unittest.TestCase):
         self.assertEqual(status_code, 400)
         self.assertIn("user_id", payload["error"])
 
+        status_code, payload = handle_request(
+            self.store,
+            method="PATCH",
+            path=f"/accounts/{account.account_id}",
+            user_id="user-123",
+            payload={"provider": "other-provider"},
+        )
+        self.assertEqual(status_code, 400)
+        self.assertIn("unsupported update field", payload["error"])
+
     def test_concurrent_withdrawals_do_not_overdraw(self) -> None:
         self.store.create_account(
             user_id="user-123",
