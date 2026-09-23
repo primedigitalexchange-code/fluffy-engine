@@ -103,9 +103,9 @@ export APP_PASSWORD='your-app-password'
 Example usage:
 
 ```python
-from banking_connector import AppCredentials
+from banking_connector import load_app_credentials_from_env
 
-credentials = AppCredentials.from_env()
+credentials = load_app_credentials_from_env()
 print(credentials.username)
 ```
 

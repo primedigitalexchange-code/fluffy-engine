@@ -437,6 +437,10 @@ def build_banking_connector_from_env(env: Mapping[str, str] | None = None) -> Pl
     return PlaidConnector(BankingConfig.from_env(env))
 
 
+def load_app_credentials_from_env(env: Mapping[str, str] | None = None) -> AppCredentials:
+    return AppCredentials.from_env(env)
+
+
 def _normalize_fernet_key(key: str) -> bytes:
     normalized_key = _require_string("BANKING_TOKEN_ENCRYPTION_KEY", key)
     if len(normalized_key) == 44:

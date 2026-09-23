@@ -13,6 +13,7 @@ from banking_connector import (
     ConfigurationError,
     EncryptedTokenStore,
     PlaidConnector,
+    load_app_credentials_from_env,
 )
 
 
@@ -90,6 +91,16 @@ class BankingConnectorTests(unittest.TestCase):
             AppCredentials.from_env({"APP_USERNAME": "app-user@example.com"})
 
         self.assertIn("APP_PASSWORD", str(raised.exception))
+
+    def test_load_app_credentials_from_env_returns_app_credentials(self) -> None:
+        credentials = load_app_credentials_from_env(
+            {
+                "APP_USERNAME": "app-user@example.com",
+                "APP_PASSWORD": "top-secret-value",
+            }
+        )
+
+        self.assertEqual(credentials, AppCredentials("app-user@example.com", "top-secret-value"))
 
     def test_token_store_encrypts_tokens_at_rest(self) -> None:
         store = EncryptedTokenStore("unit-test-token-encryption-key")
