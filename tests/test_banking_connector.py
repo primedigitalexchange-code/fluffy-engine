@@ -200,6 +200,99 @@ class BankingConnectorTests(unittest.TestCase):
 
         self.assertEqual(token_store.load_token("item-1"), "access-sandbox-new")
 
+    def test_create_transfer_authorization_returns_decision_payload(self) -> None:
+        opener = RecordingOpener(
+            [{"authorization": {"id": "auth-1", "decision": "approved", "rationale": "approved"}}]
+        )
+        token_store = EncryptedTokenStore("unit-test-token-encryption-key")
+        token_store.save_token("item-1", "access-sandbox-secret")
+        connector = PlaidConnector(self.config, opener=opener, token_store=token_store)
+
+        result = connector.create_transfer_authorization(
+            access_token_reference="item-1",
+            account_id="account-1",
+            amount="12.34",
+            ach_class="web",
+            user_legal_name="Demo User",
+        )
+
+        self.assertEqual(result.authorization_id, "auth-1")
+        self.assertEqual(result.decision, "approved")
+        self.assertEqual(opener.requests[0]["url"], "https://sandbox.plaid.com/transfer/authorization/create")
+        self.assertEqual(opener.requests[0]["payload"]["ach_class"], "web")
+
+    def test_create_transfer_authorization_decline_is_returned(self) -> None:
+        opener = RecordingOpener(
+            [{"authorization": {"id": "auth-2", "decision": "declined", "rationale": "insufficient_funds"}}]
+        )
+        token_store = EncryptedTokenStore("unit-test-token-encryption-key")
+        token_store.save_token("item-1", "access-sandbox-secret")
+        connector = PlaidConnector(self.config, opener=opener, token_store=token_store)
+
+        result = connector.create_transfer_authorization(
+            access_token_reference="item-1",
+            account_id="account-1",
+            amount="12.34",
+            ach_class="ppd",
+            user_legal_name="Demo User",
+        )
+
+        self.assertEqual(result.decision, "declined")
+        self.assertEqual(result.decision_rationale, "insufficient_funds")
+
+    def test_create_transfer_returns_transfer_metadata(self) -> None:
+        opener = RecordingOpener(
+            [{"transfer": {"id": "transfer-1", "status": "pending", "ach_class": "ccd", "network": "ach"}}]
+        )
+        token_store = EncryptedTokenStore("unit-test-token-encryption-key")
+        token_store.save_token("item-1", "access-sandbox-secret")
+        connector = PlaidConnector(self.config, opener=opener, token_store=token_store)
+
+        result = connector.create_transfer(
+            access_token_reference="item-1",
+            account_id="account-1",
+            authorization_id="auth-1",
+            amount="25.00",
+            ach_class="ccd",
+            description="Invoice payment",
+            user_legal_name="Demo User",
+            idempotency_key="idem-1",
+        )
+
+        self.assertEqual(result.transfer_id, "transfer-1")
+        self.assertEqual(result.status, "pending")
+        self.assertEqual(opener.requests[0]["url"], "https://sandbox.plaid.com/transfer/create")
+        self.assertEqual(opener.requests[0]["payload"]["idempotency_key"], "idem-1")
+
+    def test_get_transfer_status_calls_transfer_get(self) -> None:
+        opener = RecordingOpener(
+            [{"transfer": {"id": "transfer-1", "status": "posted", "ach_class": "web", "network": "ach"}}]
+        )
+        connector = PlaidConnector(self.config, opener=opener)
+
+        result = connector.get_transfer_status("transfer-1")
+
+        self.assertEqual(result.transfer_id, "transfer-1")
+        self.assertEqual(result.status, "posted")
+        self.assertEqual(opener.requests[0]["url"], "https://sandbox.plaid.com/transfer/get")
+
+    def test_create_transfer_requires_valid_ach_class(self) -> None:
+        opener = RecordingOpener([])
+        token_store = EncryptedTokenStore("unit-test-token-encryption-key")
+        token_store.save_token("item-1", "access-sandbox-secret")
+        connector = PlaidConnector(self.config, opener=opener, token_store=token_store)
+
+        with self.assertRaises(ValueError):
+            connector.create_transfer_authorization(
+                access_token_reference="item-1",
+                account_id="account-1",
+                amount="1.00",
+                ach_class="invalid",
+                user_legal_name="Demo User",
+            )
+
+        self.assertEqual(opener.requests, [])
+
     def test_rate_limit_waits_for_next_available_window(self) -> None:
         clock = FakeClock()
         config = BankingConfig.from_env(

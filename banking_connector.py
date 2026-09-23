@@ -185,6 +185,29 @@ class ConnectedBankSession:
     accounts: tuple[LiveBankAccountData, ...]
 
 
+@dataclass(frozen=True)
+class TransferAuthorizationResult:
+    authorization_id: str
+    decision: str
+    decision_rationale: str | None
+
+
+@dataclass(frozen=True)
+class TransferCreationResult:
+    transfer_id: str
+    status: str
+    ach_class: str
+    network: str
+
+
+@dataclass(frozen=True)
+class TransferStatusResult:
+    transfer_id: str
+    status: str
+    ach_class: str
+    network: str
+
+
 class EncryptedTokenStore:
     """In-memory encrypted storage for Plaid access tokens."""
 
@@ -393,6 +416,101 @@ class PlaidConnector:
             for transaction in response.get("transactions", [])
         ]
 
+    def create_transfer_authorization(
+        self,
+        *,
+        access_token_reference: str,
+        account_id: str,
+        amount: Decimal | int | str,
+        ach_class: str,
+        user_legal_name: str,
+        transfer_type: str = "debit",
+        network: str = "ach",
+    ) -> TransferAuthorizationResult:
+        response = self._request(
+            "/transfer/authorization/create",
+            {
+                "access_token": self._token_store.load_token(access_token_reference),
+                "account_id": _require_string("account_id", account_id),
+                "type": _normalize_transfer_type(transfer_type),
+                "network": _normalize_transfer_network(network),
+                "amount": _normalize_transfer_amount(amount),
+                "ach_class": _normalize_ach_class(ach_class),
+                "user": {"legal_name": _require_string("user_legal_name", user_legal_name)},
+            },
+        )
+        authorization = response.get("authorization") or {}
+        decision_rationale = authorization.get("rationale")
+        if isinstance(decision_rationale, str):
+            decision_rationale = decision_rationale.strip() or None
+        else:
+            decision_rationale = None
+        return TransferAuthorizationResult(
+            authorization_id=_require_string("authorization.id", authorization.get("id", "")),
+            decision=_require_string("authorization.decision", authorization.get("decision", "")),
+            decision_rationale=decision_rationale,
+        )
+
+    def create_transfer(
+        self,
+        *,
+        access_token_reference: str,
+        account_id: str,
+        authorization_id: str,
+        amount: Decimal | int | str,
+        ach_class: str,
+        description: str,
+        user_legal_name: str,
+        idempotency_key: str,
+        transfer_type: str = "debit",
+        network: str = "ach",
+    ) -> TransferCreationResult:
+        response = self._request(
+            "/transfer/create",
+            {
+                "idempotency_key": _require_string("idempotency_key", idempotency_key),
+                "access_token": self._token_store.load_token(access_token_reference),
+                "account_id": _require_string("account_id", account_id),
+                "authorization_id": _require_string("authorization_id", authorization_id),
+                "type": _normalize_transfer_type(transfer_type),
+                "network": _normalize_transfer_network(network),
+                "amount": _normalize_transfer_amount(amount),
+                "description": _require_string("description", description),
+                "ach_class": _normalize_ach_class(ach_class),
+                "user": {"legal_name": _require_string("user_legal_name", user_legal_name)},
+            },
+        )
+        transfer = response.get("transfer") or response
+        return TransferCreationResult(
+            transfer_id=_require_string("transfer.id", transfer.get("id", "")),
+            status=_require_string("transfer.status", transfer.get("status", "")),
+            ach_class=_require_string("transfer.ach_class", transfer.get("ach_class", "")),
+            network=_require_string("transfer.network", transfer.get("network", "")),
+        )
+
+    def get_transfer_status(self, transfer_id: str) -> TransferStatusResult:
+        response = self._request(
+            "/transfer/get",
+            {"transfer_id": _require_string("transfer_id", transfer_id)},
+        )
+        transfer = response.get("transfer") or response
+        return TransferStatusResult(
+            transfer_id=_require_string("transfer.id", transfer.get("id", "")),
+            status=_require_string("transfer.status", transfer.get("status", "")),
+            ach_class=_require_string("transfer.ach_class", transfer.get("ach_class", "")),
+            network=_require_string("transfer.network", transfer.get("network", "")),
+        )
+
+    def get_webhook_verification_key(self, key_id: str) -> dict[str, Any]:
+        response = self._request(
+            "/webhook_verification_key/get",
+            {"key_id": _require_string("key_id", key_id)},
+        )
+        key = response.get("key")
+        if not isinstance(key, dict):
+            raise BankingAPIError("Plaid webhook verification key response was invalid")
+        return key
+
     def _request(self, path: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         self._enforce_rate_limit()
         request_body = {
@@ -494,6 +612,41 @@ def _extract_http_error_message(exc: HTTPError) -> str:
 def _sanitize_message(message: str) -> str:
     redacted = _TOKEN_RE.sub("[REDACTED_TOKEN]", message)
     return redacted or "Plaid API request failed"
+
+
+def _normalize_transfer_amount(value: Decimal | int | str) -> str:
+    if isinstance(value, float):
+        raise ValueError("amount must be provided as Decimal, int, or string")
+    amount = Decimal(str(value))
+    if not amount.is_finite():
+        raise ValueError("amount must be finite")
+    quantized = amount.quantize(Decimal("0.01"))
+    if quantized != amount:
+        raise ValueError("amount must have no more than 2 decimal places")
+    if quantized <= Decimal("0.00"):
+        raise ValueError("amount must be greater than 0")
+    return f"{quantized:.2f}"
+
+
+def _normalize_ach_class(ach_class: str) -> str:
+    normalized = _require_string("ach_class", ach_class).lower()
+    if normalized not in {"web", "ppd", "ccd"}:
+        raise ValueError("ach_class must be one of: web, ppd, ccd")
+    return normalized
+
+
+def _normalize_transfer_type(transfer_type: str) -> str:
+    normalized = _require_string("transfer_type", transfer_type).lower()
+    if normalized not in {"debit", "credit"}:
+        raise ValueError("transfer_type must be debit or credit")
+    return normalized
+
+
+def _normalize_transfer_network(network: str) -> str:
+    normalized = _require_string("network", network).lower()
+    if normalized != "ach":
+        raise ValueError("network must be ach")
+    return normalized
 
 
 _TOKEN_RE = re.compile(r"\b(?:access|public|link)-[A-Za-z0-9_-]+\b")

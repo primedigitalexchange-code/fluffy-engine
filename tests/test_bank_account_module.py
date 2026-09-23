@@ -261,6 +261,82 @@ class BankAccountStoreTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             self.store.add_transaction("user-123", "000123456789", "1.999", "deposit")
 
+    def test_live_transfer_ledger_stores_and_updates_status(self) -> None:
+        transfer = self.store.create_live_transfer(
+            idempotency_key="idem-1",
+            source_user_id="user-1",
+            source_account_number="000111222333",
+            destination_user_id="user-2",
+            destination_account_number="000444555666",
+            amount="10.00",
+            ach_class="web",
+            status="pending",
+            decision="approved",
+            decision_rationale="approved",
+            authorization_id="auth-1",
+            transfer_id="tr-1",
+        )
+
+        updated = self.store.update_live_transfer_status_by_transfer_id("tr-1", status="posted")
+
+        self.assertIsNotNone(updated)
+        assert updated is not None
+        self.assertEqual(updated.payment_id, transfer.payment_id)
+        self.assertEqual(updated.status, "posted")
+        self.assertEqual(
+            self.store.get_live_transfer("user-1", transfer.payment_id).status,
+            "posted",
+        )
+
+    def test_live_transfer_ledger_enforces_idempotency_key_per_source_user(self) -> None:
+        self.store.create_live_transfer(
+            idempotency_key="idem-1",
+            source_user_id="user-1",
+            source_account_number="000111222333",
+            destination_user_id="user-2",
+            destination_account_number="000444555666",
+            amount="10.00",
+            ach_class="web",
+            status="pending",
+            decision="approved",
+            decision_rationale="approved",
+        )
+
+        with self.assertRaises(ValidationError):
+            self.store.create_live_transfer(
+                idempotency_key="idem-1",
+                source_user_id="user-1",
+                source_account_number="000111222333",
+                destination_user_id="user-2",
+                destination_account_number="000444555666",
+                amount="10.00",
+                ach_class="web",
+                status="pending",
+                decision="approved",
+                decision_rationale="approved",
+            )
+
+    def test_get_live_transfer_by_idempotency_returns_existing_record(self) -> None:
+        transfer = self.store.create_live_transfer(
+            idempotency_key="idem-lookup",
+            source_user_id="user-1",
+            source_account_number="000111222333",
+            destination_user_id="user-2",
+            destination_account_number="000444555666",
+            amount="10.00",
+            ach_class="web",
+            status="declined",
+            decision="declined",
+            decision_rationale="risk",
+            authorization_id="auth-2",
+        )
+
+        existing = self.store.get_live_transfer_by_idempotency_key("user-1", "idem-lookup")
+
+        self.assertIsNotNone(existing)
+        assert existing is not None
+        self.assertEqual(existing.payment_id, transfer.payment_id)
+
 
 if __name__ == "__main__":
     unittest.main()

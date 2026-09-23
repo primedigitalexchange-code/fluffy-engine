@@ -89,6 +89,26 @@ class AccountTransaction:
     created_at: datetime
 
 
+@dataclass(frozen=True)
+class LiveTransfer:
+    payment_id: str
+    idempotency_key: str
+    authorization_id: str | None
+    transfer_id: str | None
+    source_user_id: str
+    source_account_number: str
+    destination_user_id: str
+    destination_account_number: str
+    amount: Decimal
+    ach_class: str
+    status: str
+    decision: str
+    decision_rationale: str | None
+    created_at: datetime
+    last_updated_at: datetime
+    network: str = "ach"
+
+
 def _validate_required_string(field_name: str, value: Any) -> str:
     if not isinstance(value, str):
         raise ValidationError(f"{field_name} must be a string")
@@ -211,6 +231,9 @@ class BankAccountStore:
         self._lock = RLock()
         self._accounts: dict[tuple[str, str], BankAccount] = {}
         self._transactions: dict[tuple[str, str], list[AccountTransaction]] = {}
+        self._live_transfers: dict[str, LiveTransfer] = {}
+        self._live_transfer_idempotency_index: dict[tuple[str, str], str] = {}
+        self._live_transfer_provider_index: dict[str, str] = {}
 
     def _get_account_unlocked(self, account_key: tuple[str, str]) -> BankAccount:
         try:
@@ -445,6 +468,156 @@ class BankAccountStore:
             "balance": f"{account.balance:.2f}",
             "status": account.status.value,
         }
+
+    def create_live_transfer(
+        self,
+        *,
+        idempotency_key: str,
+        source_user_id: str,
+        source_account_number: str,
+        destination_user_id: str,
+        destination_account_number: str,
+        amount: Decimal | int | str,
+        ach_class: str,
+        status: str,
+        decision: str,
+        decision_rationale: str | None,
+        authorization_id: str | None = None,
+        transfer_id: str | None = None,
+        network: str = "ach",
+        created_at: datetime | None = None,
+    ) -> LiveTransfer:
+        source_user_id = _validate_required_string("source_user_id", source_user_id)
+        idempotency_key = _validate_required_string("idempotency_key", idempotency_key)
+        source_account_number = _validate_required_string("source_account_number", source_account_number)
+        destination_user_id = _validate_required_string("destination_user_id", destination_user_id)
+        destination_account_number = _validate_required_string("destination_account_number", destination_account_number)
+        normalized_status = _validate_required_string("status", status).lower()
+        normalized_decision = _validate_required_string("decision", decision).lower()
+        normalized_ach_class = _validate_required_string("ach_class", ach_class).lower()
+        normalized_network = _validate_required_string("network", network).lower()
+        normalized_rationale = (
+            _validate_required_string("decision_rationale", decision_rationale)
+            if decision_rationale is not None
+            else None
+        )
+        normalized_authorization_id = (
+            _validate_required_string("authorization_id", authorization_id)
+            if authorization_id is not None
+            else None
+        )
+        normalized_transfer_id = (
+            _validate_required_string("transfer_id", transfer_id)
+            if transfer_id is not None
+            else None
+        )
+        amount_value = _validate_balance(amount)
+        if amount_value <= Decimal("0.00"):
+            raise ValidationError("amount must be greater than 0")
+        now = created_at or datetime.now(timezone.utc)
+        payment_id = str(uuid4())
+        transfer = LiveTransfer(
+            payment_id=payment_id,
+            idempotency_key=idempotency_key,
+            authorization_id=normalized_authorization_id,
+            transfer_id=normalized_transfer_id,
+            source_user_id=source_user_id,
+            source_account_number=source_account_number,
+            destination_user_id=destination_user_id,
+            destination_account_number=destination_account_number,
+            amount=amount_value,
+            ach_class=normalized_ach_class,
+            status=normalized_status,
+            decision=normalized_decision,
+            decision_rationale=normalized_rationale,
+            created_at=now,
+            last_updated_at=now,
+            network=normalized_network,
+        )
+        with self._lock:
+            index_key = (source_user_id, idempotency_key)
+            if index_key in self._live_transfer_idempotency_index:
+                raise ValidationError("live transfer already exists for this idempotency key")
+            self._live_transfers[payment_id] = transfer
+            self._live_transfer_idempotency_index[index_key] = payment_id
+            if normalized_transfer_id is not None:
+                self._live_transfer_provider_index[normalized_transfer_id] = payment_id
+            return transfer
+
+    def get_live_transfer(self, source_user_id: str, payment_id: str) -> LiveTransfer:
+        source_user_id = _validate_required_string("source_user_id", source_user_id)
+        payment_id = _validate_required_string("payment_id", payment_id)
+        with self._lock:
+            transfer = self._live_transfers.get(payment_id)
+            if transfer is None or transfer.source_user_id != source_user_id:
+                raise NotFoundError("live transfer not found")
+            return transfer
+
+    def get_live_transfer_by_idempotency_key(
+        self, source_user_id: str, idempotency_key: str
+    ) -> LiveTransfer | None:
+        source_user_id = _validate_required_string("source_user_id", source_user_id)
+        idempotency_key = _validate_required_string("idempotency_key", idempotency_key)
+        with self._lock:
+            payment_id = self._live_transfer_idempotency_index.get((source_user_id, idempotency_key))
+            if payment_id is None:
+                return None
+            return self._live_transfers[payment_id]
+
+    def update_live_transfer(
+        self,
+        payment_id: str,
+        *,
+        status: str | None = None,
+        transfer_id: str | None = None,
+        decision_rationale: str | None = None,
+        network: str | None = None,
+        updated_at: datetime | None = None,
+    ) -> LiveTransfer:
+        payment_id = _validate_required_string("payment_id", payment_id)
+        with self._lock:
+            transfer = self._live_transfers.get(payment_id)
+            if transfer is None:
+                raise NotFoundError("live transfer not found")
+            updates: dict[str, Any] = {"last_updated_at": updated_at or datetime.now(timezone.utc)}
+            if status is not None:
+                updates["status"] = _validate_required_string("status", status).lower()
+            if transfer_id is not None:
+                normalized_transfer_id = _validate_required_string("transfer_id", transfer_id)
+                updates["transfer_id"] = normalized_transfer_id
+            if decision_rationale is not None:
+                updates["decision_rationale"] = _validate_required_string("decision_rationale", decision_rationale)
+            if network is not None:
+                updates["network"] = _validate_required_string("network", network).lower()
+            updated_transfer = replace(transfer, **updates)
+            self._live_transfers[payment_id] = updated_transfer
+            if updated_transfer.transfer_id:
+                self._live_transfer_provider_index[updated_transfer.transfer_id] = payment_id
+            return updated_transfer
+
+    def update_live_transfer_status_by_transfer_id(
+        self,
+        transfer_id: str,
+        *,
+        status: str,
+        decision_rationale: str | None = None,
+        updated_at: datetime | None = None,
+    ) -> LiveTransfer | None:
+        transfer_id = _validate_required_string("transfer_id", transfer_id)
+        with self._lock:
+            payment_id = self._live_transfer_provider_index.get(transfer_id)
+            if payment_id is None:
+                return None
+            transfer = self._live_transfers[payment_id]
+            updates: dict[str, Any] = {
+                "status": _validate_required_string("status", status).lower(),
+                "last_updated_at": updated_at or datetime.now(timezone.utc),
+            }
+            if decision_rationale is not None:
+                updates["decision_rationale"] = _validate_required_string("decision_rationale", decision_rationale)
+            updated_transfer = replace(transfer, **updates)
+            self._live_transfers[payment_id] = updated_transfer
+            return updated_transfer
 
 
 def retrieve_account(store: BankAccountStore, user_id: str, account_number: str) -> dict[str, Any]:
