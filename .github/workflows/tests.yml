@@ -41,9 +41,8 @@ jobs:
           mkdir -p test-results
           pytest tests/ \
             --junitxml=test-results/pytest.xml \
-            --cov=bank_account \
-            --cov=bank_profile \
-            --cov=banking_connector \
+            --cov=. \
+            --cov-config=.coveragerc \
             --cov-report=term-missing \
             --cov-report=xml:test-results/coverage.xml
 
