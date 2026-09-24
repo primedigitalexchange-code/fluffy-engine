@@ -35,5 +35,41 @@ jobs:
 
       - name: Scan for hardcoded secrets with detect-secrets
         run: |
-          find . -type f -not -path './.git/*' -not -path './.pytest_cache/*' -printf '%P\0' \
-            | xargs -0 detect-secrets-hook --baseline .secrets.baseline
+          detect-secrets scan --all-files --exclude-files '(^\.secrets\.baseline$|.*\.pytest_cache/.*)' > .secrets.current.json
+          python - <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          def fingerprints(results: dict[str, list[dict[str, object]]]) -> set[tuple[str, str, str]]:
+              items: set[tuple[str, str, str]] = set()
+              for file_path, findings in results.items():
+                  normalized = str(Path(file_path))
+                  for finding in findings:
+                      items.add(
+                          (
+                              normalized,
+                              str(finding.get("type", "")),
+                              str(finding.get("hashed_secret", "")),
+                          )
+                      )
+              return items
+
+          with open(".secrets.baseline", "r", encoding="utf-8") as baseline_fh:
+              baseline = json.load(baseline_fh)
+
+          with open(".secrets.current.json", "r", encoding="utf-8") as current_fh:
+              current = json.load(current_fh)
+
+          baseline_findings = fingerprints(baseline.get("results", {}))
+          current_findings = fingerprints(current.get("results", {}))
+          new_findings = sorted(current_findings - baseline_findings)
+
+          if new_findings:
+              print("New potential hardcoded secrets detected:")
+              for file_path, finding_type, hashed_secret in new_findings:
+                  print(f"- {file_path}: {finding_type} ({hashed_secret})")
+              sys.exit(1)
+
+          print("No new hardcoded secrets detected.")
+          PY
