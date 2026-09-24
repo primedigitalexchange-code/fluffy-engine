@@ -50,5 +50,7 @@ jobs:
                   continue
               if ".git" in path.parts or ".pytest_cache" in path.parts:
                   continue
+              if path.name == "bandit.sarif":
+                  continue
               print(path.as_posix(), end="\0")
           PY
