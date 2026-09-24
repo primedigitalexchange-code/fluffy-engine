@@ -35,4 +35,5 @@ jobs:
 
       - name: Scan for hardcoded secrets with detect-secrets
         run: |
-          git ls-files -z | xargs -0 detect-secrets-hook --baseline .secrets.baseline
+          find . -type f -not -path './.git/*' -not -path './.pytest_cache/*' -printf '%P\0' \
+            | xargs -0 detect-secrets-hook --baseline .secrets.baseline
