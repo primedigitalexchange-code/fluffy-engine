@@ -1,15 +1,16 @@
-"""Public exports for the bank account module."""
+"""Compatibility package for the canonical bank_account implementation."""
 
-from .module import (
+from bank_account import (
     APIError,
     AccountStatus,
     AccountStatusChange,
     AccountTransaction,
     BankAccount,
-    BankAccountStore,
     DataSource,
     NotFoundError,
     ValidationError,
+)
+from .api import (
     create_account_from_live_api,
     create_account_from_mock_data,
     get_account_audit_history,
@@ -19,6 +20,7 @@ from .module import (
     retrieve_account,
     update_account,
 )
+from .store import BankAccountStore
 
 __all__ = [
     "APIError",
