@@ -35,4 +35,4 @@ jobs:
 
       - name: Scan for hardcoded secrets with detect-secrets
         run: |
-          detect-secrets-hook --baseline .secrets.baseline $(git ls-files)
+          git ls-files -z | xargs -0 detect-secrets-hook --baseline .secrets.baseline
