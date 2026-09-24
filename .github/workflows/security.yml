@@ -46,7 +46,7 @@ jobs:
           PY
 
       - name: Run bandit security scan
-        run: git ls-files -z '*.py' ':!:tests/*' ':!:.github/*' | xargs -0 bandit -ll -ii -f sarif -o bandit.sarif
+        run: git ls-files -z '*.py' ':!:tests/*' ':!:.github/*' | xargs -0 -r bandit -ll -ii -f sarif -o bandit.sarif
 
       - name: Upload bandit SARIF report
         if: always()
