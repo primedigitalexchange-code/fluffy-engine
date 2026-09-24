@@ -31,18 +31,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run bandit security scan
-        run: bandit -r . -x tests,.github -ll -ii -f sarif -o bandit.sarif
-
-      - name: Upload bandit SARIF report
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: bandit.sarif
-
       - name: Scan for hardcoded secrets with detect-secrets
         run: |
           python - <<'PY' | xargs -0 detect-secrets-hook --baseline .secrets.baseline --exclude-files '^\.secrets\.baseline$'
+          import sys
           from pathlib import Path
 
           for path in Path(".").rglob("*"):
@@ -50,7 +42,14 @@ jobs:
                   continue
               if ".git" in path.parts or ".pytest_cache" in path.parts:
                   continue
-              if path.name == "bandit.sarif":
-                  continue
-              print(path.as_posix(), end="\0")
+              sys.stdout.buffer.write(path.as_posix().encode("utf-8") + b"\0")
           PY
+
+      - name: Run bandit security scan
+        run: git ls-files -z '*.py' ':!:tests/*' ':!:.github/*' | xargs -0 bandit -ll -ii -f sarif -o bandit.sarif
+
+      - name: Upload bandit SARIF report
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit.sarif
