@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  security-events: write
 
 jobs:
   security:
@@ -31,9 +32,23 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run bandit security scan
-        run: bandit -r . -x tests,.github -ll -ii
+        run: bandit -r . -x tests,.github -ll -ii -f sarif -o bandit.sarif
+
+      - name: Upload bandit SARIF report
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit.sarif
 
       - name: Scan for hardcoded secrets with detect-secrets
         run: |
-          git ls-files --cached -z \
-            | xargs -0 detect-secrets-hook --baseline .secrets.baseline
+          python - <<'PY' | xargs -0 detect-secrets-hook --baseline .secrets.baseline --exclude-files '^\.secrets\.baseline$'
+          from pathlib import Path
+
+          for path in Path(".").rglob("*"):
+              if not path.is_file():
+                  continue
+              if ".git" in path.parts or ".pytest_cache" in path.parts:
+                  continue
+              print(path.as_posix(), end="\0")
+          PY
