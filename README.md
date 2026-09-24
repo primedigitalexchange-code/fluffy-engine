@@ -92,6 +92,9 @@ export BANKING_RATE_LIMIT_PER_MINUTE=30
 export BANKING_LOG_LEVEL=INFO
 ```
 
+You can also copy `/home/runner/work/fluffy-engine/fluffy-engine/.env.example`
+and fill in your Plaid/app values before starting the service.
+
 If your application also needs its own runtime login separate from Plaid, provide
 it through environment variables instead of hardcoding secrets in the repository:
 

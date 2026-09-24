@@ -1,0 +1,57 @@
+name: Security
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-ci.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-ci.txt
+
+      - name: Scan for hardcoded secrets with detect-secrets
+        run: |
+          python - <<'PY' | xargs -0 detect-secrets-hook --baseline .secrets.baseline --exclude-files '^\.secrets\.baseline$'
+          import sys
+          from pathlib import Path
+
+          for path in Path(".").rglob("*"):
+              if not path.is_file():
+                  continue
+              if ".git" in path.parts or ".pytest_cache" in path.parts:
+                  continue
+              sys.stdout.buffer.write(path.as_posix().encode("utf-8") + b"\0")
+          PY
+
+      - name: Run bandit security scan
+        run: git ls-files -z '*.py' ':!:tests/*' ':!:.github/*' | xargs -0 -r bandit -ll -ii -f sarif -o bandit.sarif
+
+      - name: Upload bandit SARIF report
+        if: always() && hashFiles('bandit.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit.sarif
