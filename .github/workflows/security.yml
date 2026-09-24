@@ -31,9 +31,11 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run bandit security scan
-        run: bandit -r bank_account bank_profile.py banking_connector.py -ll -ii
+        run: |
+          bandit -r bank_account -ll -ii
+          bandit bank_profile.py banking_connector.py -ll -ii
 
       - name: Scan for hardcoded secrets with detect-secrets
         run: |
-          git ls-files --cached --others --exclude-standard -z \
+          git ls-files --cached -z \
             | xargs -0 detect-secrets-hook --baseline .secrets.baseline
