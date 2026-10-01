@@ -3,6 +3,7 @@
 from .module import (
     AccountStatus,
     AccountTransaction,
+    AccountTransfer,
     BankAccount,
     BankAccountStore,
     DataSource,
@@ -19,6 +20,7 @@ from .module import (
 __all__ = [
     "AccountStatus",
     "AccountTransaction",
+    "AccountTransfer",
     "BankAccount",
     "BankAccountStore",
     "DataSource",

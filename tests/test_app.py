@@ -119,6 +119,65 @@ class BankingApiTests(unittest.TestCase):
         invalid = {**payload, "account_number": "mock-456", "balance": "1.001"}
         self.assertEqual(self.client.post("/accounts", auth=self.auth, json=invalid).status_code, 422)
 
+    def test_mock_transfer_and_live_transfer_rejection(self) -> None:
+        for account_number, balance in (("source", "20.00"), ("destination", "5.00")):
+            response = self.client.post(
+                "/accounts",
+                auth=self.auth,
+                json={
+                    "account_number": account_number,
+                    "account_type": "checking",
+                    "balance": balance,
+                },
+            )
+            self.assertEqual(response.status_code, 201)
+
+        response = self.client.post(
+            "/transfers",
+            auth=self.auth,
+            json={
+                "source_account_number": "source",
+                "destination_account_number": "destination",
+                "amount": "7.50",
+            },
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["transfer"]["amount"], "7.50")
+        self.assertEqual(
+            self.client.get("/accounts/source/balance", auth=self.auth).json()["balance"],
+            "12.50",
+        )
+        self.assertEqual(
+            self.client.get("/accounts/destination/balance", auth=self.auth).json()["balance"],
+            "12.50",
+        )
+        source_history = self.client.get("/accounts/source/transactions", auth=self.auth).json()
+        destination_history = self.client.get(
+            "/accounts/destination/transactions", auth=self.auth
+        ).json()
+        self.assertEqual(source_history["transactions"][0]["transaction_type"], "transfer_out")
+        self.assertEqual(destination_history["transactions"][0]["transaction_type"], "transfer_in")
+        self.assertEqual(
+            source_history["transactions"][0]["transfer_id"],
+            destination_history["transactions"][0]["transfer_id"],
+        )
+
+        self.client.post(
+            "/banking/accounts",
+            auth=self.auth,
+            json={"public_token": "public-test"},
+        )
+        live_transfer = self.client.post(
+            "/transfers",
+            auth=self.auth,
+            json={
+                "source_account_number": "source",
+                "destination_account_number": "000123456789",
+                "amount": "1.00",
+            },
+        )
+        self.assertEqual(live_transfer.status_code, 409)
+
     def test_linking_and_live_transaction_history(self) -> None:
         link_token = self.client.post("/banking/link-token", auth=self.auth)
         self.assertEqual(link_token.status_code, 200)

@@ -87,6 +87,16 @@ class AccountTransaction:
     amount: Decimal
     transaction_type: str
     created_at: datetime
+    transfer_id: str | None = None
+
+
+@dataclass(frozen=True)
+class AccountTransfer:
+    transfer_id: str
+    source_account_number: str
+    destination_account_number: str
+    amount: Decimal
+    created_at: datetime
 
 
 def _validate_required_string(field_name: str, value: Any) -> str:
@@ -428,6 +438,72 @@ class BankAccountStore:
             )
             self._transactions[account_key].append(transaction)
             return transaction
+
+    def transfer(
+        self,
+        user_id: str,
+        source_account_number: str,
+        destination_account_number: str,
+        amount: Decimal | int | str,
+    ) -> AccountTransfer:
+        user_id = _validate_required_string("user_id", user_id)
+        source_account_number = _validate_required_string(
+            "source_account_number", source_account_number
+        )
+        destination_account_number = _validate_required_string(
+            "destination_account_number", destination_account_number
+        )
+        if source_account_number == destination_account_number:
+            raise ValidationError("source and destination accounts must be different")
+
+        amount_decimal = _validate_balance(amount)
+        if amount_decimal == Decimal("0.00"):
+            raise ValidationError("transfer amount must be greater than 0")
+
+        source_key = (user_id, source_account_number)
+        destination_key = (user_id, destination_account_number)
+        with self._lock:
+            source = self._get_account_unlocked(source_key)
+            destination = self._get_account_unlocked(destination_key)
+            if source.data_source != DataSource.MOCK or destination.data_source != DataSource.MOCK:
+                raise ValidationError("transfers are supported only between mock accounts")
+            if source.status != AccountStatus.ACTIVE or destination.status != AccountStatus.ACTIVE:
+                raise ValidationError("both accounts must be active to process transfers")
+            if source.balance < amount_decimal:
+                raise ValidationError("insufficient funds")
+
+            source_balance = source.balance - amount_decimal
+            destination_balance = destination.balance + amount_decimal
+            transfer_id = str(uuid4())
+            created_at = datetime.now(timezone.utc)
+            transfer = AccountTransfer(
+                transfer_id=transfer_id,
+                source_account_number=source.account_number,
+                destination_account_number=destination.account_number,
+                amount=amount_decimal,
+                created_at=created_at,
+            )
+            source_transaction = AccountTransaction(
+                transaction_id=str(uuid4()),
+                account_number=source.account_number,
+                amount=amount_decimal,
+                transaction_type="transfer_out",
+                created_at=created_at,
+                transfer_id=transfer_id,
+            )
+            destination_transaction = AccountTransaction(
+                transaction_id=str(uuid4()),
+                account_number=destination.account_number,
+                amount=amount_decimal,
+                transaction_type="transfer_in",
+                created_at=created_at,
+                transfer_id=transfer_id,
+            )
+            self._accounts[source_key] = replace(source, balance=source_balance)
+            self._accounts[destination_key] = replace(destination, balance=destination_balance)
+            self._transactions[source_key].append(source_transaction)
+            self._transactions[destination_key].append(destination_transaction)
+            return transfer
 
     def list_transactions(self, user_id: str, account_number: str) -> list[AccountTransaction]:
         account_key = (

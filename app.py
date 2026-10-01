@@ -54,6 +54,12 @@ class TransactionRequest(BaseModel):
     transaction_type: str = Field(min_length=1)
 
 
+class TransferRequest(BaseModel):
+    source_account_number: str = Field(min_length=1)
+    destination_account_number: str = Field(min_length=1)
+    amount: Decimal
+
+
 class ApiUnavailableError(RuntimeError):
     pass
 
@@ -196,6 +202,37 @@ def create_app(
             }
         }
 
+    @application.post("/transfers", status_code=status.HTTP_201_CREATED)
+    def create_transfer(
+        payload: TransferRequest,
+        user_id: str = Depends(_authenticated_user),
+    ) -> dict[str, Any]:
+        try:
+            transfer = application.state.store.transfer(
+                user_id,
+                payload.source_account_number,
+                payload.destination_account_number,
+                payload.amount,
+            )
+        except NotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found") from exc
+        except ValidationError as exc:
+            error_status = (
+                status.HTTP_409_CONFLICT
+                if str(exc) == "transfers are supported only between mock accounts"
+                else status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+            raise HTTPException(status_code=error_status, detail=str(exc)) from exc
+        return {
+            "transfer": {
+                "transfer_id": transfer.transfer_id,
+                "source_account_number": transfer.source_account_number,
+                "destination_account_number": transfer.destination_account_number,
+                "amount": f"{transfer.amount:.2f}",
+                "created_at": transfer.created_at.isoformat(),
+            }
+        }
+
     @application.get("/accounts/{account_number}/transactions")
     def transactions(
         account_number: str,
@@ -264,6 +301,7 @@ def create_app(
                     "amount": f"{item.amount:.2f}",
                     "transaction_type": item.transaction_type,
                     "created_at": item.created_at.isoformat(),
+                    "transfer_id": item.transfer_id,
                 }
                 for item in local_transactions
             ]

@@ -200,6 +200,55 @@ class BankAccountStoreTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             self.store.add_transaction("user-123", "000123456783", "15.00", "withdrawal")
 
+    def test_transfer_updates_both_accounts_and_links_ledger_entries(self) -> None:
+        self.store.create_account(
+            user_id="user-123",
+            account_number="source",
+            account_type="checking",
+            balance="100.00",
+        )
+        self.store.create_account(
+            user_id="user-123",
+            account_number="destination",
+            account_type="savings",
+            balance="20.00",
+        )
+
+        transfer = self.store.transfer("user-123", "source", "destination", "25.50")
+
+        self.assertEqual(self.store.get_account("user-123", "source").balance, Decimal("74.50"))
+        self.assertEqual(self.store.get_account("user-123", "destination").balance, Decimal("45.50"))
+        source_transaction = self.store.list_transactions("user-123", "source")[0]
+        destination_transaction = self.store.list_transactions("user-123", "destination")[0]
+        self.assertEqual(source_transaction.transaction_type, "transfer_out")
+        self.assertEqual(destination_transaction.transaction_type, "transfer_in")
+        self.assertEqual(source_transaction.transfer_id, transfer.transfer_id)
+        self.assertEqual(destination_transaction.transfer_id, transfer.transfer_id)
+
+    def test_invalid_transfer_does_not_change_either_balance(self) -> None:
+        self.store.create_account(
+            user_id="user-123",
+            account_number="source",
+            account_type="checking",
+            balance="10.00",
+        )
+        self.store.create_account(
+            user_id="user-123",
+            account_number="destination",
+            account_type="savings",
+            balance="20.00",
+        )
+
+        with self.assertRaisesRegex(ValidationError, "insufficient funds"):
+            self.store.transfer("user-123", "source", "destination", "15.00")
+        with self.assertRaisesRegex(ValidationError, "must be different"):
+            self.store.transfer("user-123", "source", "source", "1.00")
+
+        self.assertEqual(self.store.get_account("user-123", "source").balance, Decimal("10.00"))
+        self.assertEqual(self.store.get_account("user-123", "destination").balance, Decimal("20.00"))
+        self.assertEqual(self.store.list_transactions("user-123", "source"), [])
+        self.assertEqual(self.store.list_transactions("user-123", "destination"), [])
+
     def test_inactive_account_cannot_accept_transactions(self) -> None:
         self.store.create_account(
             user_id="user-123",

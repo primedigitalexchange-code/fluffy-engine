@@ -114,6 +114,8 @@ The API includes:
 - `GET /accounts/{account_number}/balance` and
   `POST /accounts/{account_number}/transactions` for mock balance and transaction
   operations.
+- `POST /transfers` to atomically transfer funds between two active mock accounts
+  belonging to the authenticated user. Live-account transfers are not supported.
 - `POST /banking/link-token` to create a Plaid Link token and
   `POST /banking/accounts` to exchange a Link public token and connect its
   accounts. These endpoints require live banking configuration.
