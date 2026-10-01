@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import date
+from decimal import Decimal
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -33,6 +34,23 @@ security = HTTPBasic()
 
 class PublicTokenRequest(BaseModel):
     public_token: str = Field(min_length=1)
+
+
+class MockAccountRequest(BaseModel):
+    account_number: str = Field(min_length=1)
+    account_type: str = Field(min_length=1)
+    balance: Decimal = Decimal("0.00")
+    routing_number: str | None = None
+    bank_name: str | None = None
+    bank_address: str | None = None
+    city: str | None = None
+    state: str | None = None
+    postal_code: str | None = None
+
+
+class TransactionRequest(BaseModel):
+    amount: Decimal
+    transaction_type: str = Field(min_length=1)
 
 
 class ApiUnavailableError(RuntimeError):
@@ -90,6 +108,33 @@ def create_app(
     def accounts(user_id: str = Depends(_authenticated_user)) -> dict[str, Any]:
         return list_user_accounts(application.state.store, user_id)
 
+    @application.post("/accounts", status_code=status.HTTP_201_CREATED)
+    def create_mock_account(
+        payload: MockAccountRequest,
+        user_id: str = Depends(_authenticated_user),
+    ) -> dict[str, Any]:
+        try:
+            created = application.state.store.create_account(
+                user_id=user_id,
+                account_number=payload.account_number,
+                account_type=payload.account_type,
+                balance=payload.balance,
+                routing_number=payload.routing_number,
+                bank_name=payload.bank_name,
+                bank_address=payload.bank_address,
+                city=payload.city,
+                state=payload.state,
+                postal_code=payload.postal_code,
+            )
+        except ValidationError as exc:
+            error_status = (
+                status.HTTP_409_CONFLICT
+                if str(exc) == "account already exists for this user"
+                else status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+            raise HTTPException(status_code=error_status, detail=str(exc)) from exc
+        return retrieve_account(application.state.store, user_id, created.account_number)
+
     @application.get("/accounts/{account_number}")
     def account(
         account_number: str,
@@ -109,6 +154,33 @@ def create_app(
             return get_account_balance_status(application.state.store, user_id, account_number)
         except NotFoundError as exc:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found") from exc
+
+    @application.post("/accounts/{account_number}/transactions", status_code=status.HTTP_201_CREATED)
+    def create_transaction(
+        account_number: str,
+        payload: TransactionRequest,
+        user_id: str = Depends(_authenticated_user),
+    ) -> dict[str, Any]:
+        try:
+            transaction = application.state.store.add_transaction(
+                user_id,
+                account_number,
+                payload.amount,
+                payload.transaction_type,
+            )
+        except NotFoundError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found") from exc
+        except ValidationError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        return {
+            "transaction": {
+                "transaction_id": transaction.transaction_id,
+                "account_number": transaction.account_number,
+                "amount": f"{transaction.amount:.2f}",
+                "transaction_type": transaction.transaction_type,
+                "created_at": transaction.created_at.isoformat(),
+            }
+        }
 
     @application.get("/accounts/{account_number}/transactions")
     def transactions(
