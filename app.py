@@ -3,6 +3,7 @@ from __future__ import annotations
 import secrets
 from datetime import date
 from decimal import Decimal
+from threading import Lock
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
@@ -71,8 +72,14 @@ def _authenticated_user(
                 detail="Application credentials are not configured",
             ) from exc
 
-    username_matches = secrets.compare_digest(credentials.username, configured.username)
-    password_matches = secrets.compare_digest(credentials.password, configured.password)
+    username_matches = secrets.compare_digest(
+        credentials.username.encode("utf-8"),
+        configured.username.encode("utf-8"),
+    )
+    password_matches = secrets.compare_digest(
+        credentials.password.encode("utf-8"),
+        configured.password.encode("utf-8"),
+    )
     if not (username_matches and password_matches):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -98,6 +105,7 @@ def create_app(
     application = FastAPI(title="Fluffy Engine Banking API", version="1.0.0")
     application.state.store = store or BankAccountStore()
     application.state.connector = connector
+    application.state.connector_lock = Lock()
     application.state.credentials = credentials
 
     @application.get("/healthz", status_code=status.HTTP_200_OK)
@@ -317,15 +325,16 @@ def create_app(
 
 
 def _connector_from_application(application: FastAPI) -> Any:
-    connector = application.state.connector
-    if connector is not None:
+    with application.state.connector_lock:
+        connector = application.state.connector
+        if connector is not None:
+            return connector
+        try:
+            connector = build_banking_connector_from_env()
+        except (ConfigurationError, ValueError) as exc:
+            raise ApiUnavailableError from exc
+        application.state.connector = connector
         return connector
-    try:
-        connector = build_banking_connector_from_env()
-    except (ConfigurationError, ValueError) as exc:
-        raise ApiUnavailableError from exc
-    application.state.connector = connector
-    return connector
 
 
 app = create_app()

@@ -75,6 +75,13 @@ class BankingApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.headers["www-authenticate"], "Basic")
 
+    def test_non_ascii_application_password_is_rejected_cleanly(self) -> None:
+        client = TestClient(
+            create_app(credentials=AppCredentials("api-user", "pässword"))
+        )
+        response = client.get("/accounts", auth=("api-user", "pässword"))
+        self.assertEqual(response.status_code, 401)
+
     def test_mock_account_create_list_balance_and_transactions(self) -> None:
         response = self.client.post(
             "/accounts",
