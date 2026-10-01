@@ -161,6 +161,12 @@ def create_app(
         payload: TransactionRequest,
         user_id: str = Depends(_authenticated_user),
     ) -> dict[str, Any]:
+        account_record = _account_or_404(application.state.store, user_id, account_number)
+        if account_record.data_source == DataSource.LIVE:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Transactions on live accounts are managed by the banking provider",
+            )
         try:
             transaction = application.state.store.add_transaction(
                 user_id,
@@ -196,6 +202,11 @@ def create_app(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="start_date and end_date are required for live transactions",
                 )
+            if start_date > end_date:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="start_date must be on or before end_date",
+                )
             try:
                 results = _connector_from_application(application).get_transaction_history(
                     account_record.provider_item_id or "",
@@ -229,6 +240,15 @@ def create_app(
                 ]
             }
 
+        local_transactions = application.state.store.list_transactions(user_id, account_number)
+        if start_date is not None:
+            local_transactions = [
+                item for item in local_transactions if item.created_at.date() >= start_date
+            ]
+        if end_date is not None:
+            local_transactions = [
+                item for item in local_transactions if item.created_at.date() <= end_date
+            ]
         return {
             "transactions": [
                 {
@@ -237,7 +257,7 @@ def create_app(
                     "transaction_type": item.transaction_type,
                     "created_at": item.created_at.isoformat(),
                 }
-                for item in application.state.store.list_transactions(user_id, account_number)
+                for item in local_transactions
             ]
         }
 
@@ -302,7 +322,7 @@ def _connector_from_application(application: FastAPI) -> Any:
         return connector
     try:
         connector = build_banking_connector_from_env()
-    except ConfigurationError as exc:
+    except (ConfigurationError, ValueError) as exc:
         raise ApiUnavailableError from exc
     application.state.connector = connector
     return connector

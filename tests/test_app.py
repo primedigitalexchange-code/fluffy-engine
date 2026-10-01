@@ -125,11 +125,25 @@ class BankingApiTests(unittest.TestCase):
         self.assertEqual(linked.status_code, 201)
         self.assertEqual(linked.json()["accounts"][0]["data_source"], "live")
 
+        rejected_transaction = self.client.post(
+            "/accounts/000123456789/transactions",
+            auth=self.auth,
+            json={"amount": "1.00", "transaction_type": "deposit"},
+        )
+        self.assertEqual(rejected_transaction.status_code, 409)
+
         missing_dates = self.client.get(
             "/accounts/000123456789/transactions",
             auth=self.auth,
         )
         self.assertEqual(missing_dates.status_code, 422)
+
+        invalid_date_range = self.client.get(
+            "/accounts/000123456789/transactions",
+            auth=self.auth,
+            params={"start_date": "2026-09-30", "end_date": "2026-09-01"},
+        )
+        self.assertEqual(invalid_date_range.status_code, 422)
 
         history = self.client.get(
             "/accounts/000123456789/transactions",
