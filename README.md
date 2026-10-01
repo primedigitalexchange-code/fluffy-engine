@@ -92,6 +92,41 @@ export BANKING_RATE_LIMIT_PER_MINUTE=30
 export BANKING_LOG_LEVEL=INFO
 ```
 
+## Banking API
+
+Install the API dependencies and start the local server:
+
+```bash
+pip install -r requirements.txt
+export APP_USERNAME='your-app-username'
+export APP_PASSWORD='your-app-password'
+uvicorn app:app --host 127.0.0.1 --port 8000
+```
+
+The interactive API documentation is available at `http://127.0.0.1:8000/docs`.
+All routes except `GET /healthz` require HTTP Basic authentication using the
+configured application credentials.
+
+The API includes:
+
+- `POST /accounts` to create a mock account; `GET /accounts` and
+  `GET /accounts/{account_number}` to list or retrieve accounts.
+- `GET /accounts/{account_number}/balance` and
+  `POST /accounts/{account_number}/transactions` for mock balance and transaction
+  operations.
+- `POST /banking/link-token` to create a Plaid Link token and
+  `POST /banking/accounts` to exchange a Link public token and connect its
+  accounts. These endpoints require live banking configuration.
+- `GET /accounts/{account_number}/transactions?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD`
+  to retrieve mock transactions or live Plaid transaction history.
+
+The API currently uses a single configured application user and in-memory
+account/token storage. Data and connected tokens are lost when the process
+restarts; this is a development API, not a production deployment. Use HTTPS
+before exposing authenticated or financial-data endpoints outside a trusted
+local environment, and add durable storage and managed token encryption before
+production use.
+
 If your application also needs its own runtime login separate from Plaid, provide
 it through environment variables instead of hardcoding secrets in the repository:
 
