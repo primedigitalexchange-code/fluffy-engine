@@ -78,7 +78,7 @@ class FakeConnector:
         return {
             "id": transfer_id,
             "status": "pending",
-            "account_id": "account-1",
+            "account_id": "other-account" if transfer_id == "other-transfer" else "account-1",
         }
 
 
@@ -231,6 +231,13 @@ class BankingApiTests(unittest.TestCase):
             self.connector.last_transfer_request[:2],
             ("item-1", "account-1"),
         )
+        self.assertEqual(
+            self.client.get(
+                "/accounts/000123456789/balance",
+                auth=self.auth,
+            ).json()["balance"],
+            "42.50",
+        )
         status_response = self.client.get(
             "/banking/transfers/transfer-1",
             auth=self.auth,
@@ -238,6 +245,12 @@ class BankingApiTests(unittest.TestCase):
         )
         self.assertEqual(status_response.status_code, 200)
         self.assertEqual(status_response.json()["transfer"]["status"], "pending")
+        another_account_transfer = self.client.get(
+            "/banking/transfers/other-transfer",
+            auth=self.auth,
+            params={"account_number": "000123456789"},
+        )
+        self.assertEqual(another_account_transfer.status_code, 404)
 
         not_authorized = self.client.post(
             "/banking/transfers",
