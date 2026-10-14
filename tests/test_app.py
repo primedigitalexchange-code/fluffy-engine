@@ -67,7 +67,18 @@ class FakeConnector:
         self.last_transfer_request = (item_id, account_id, transfer_request)
         return {
             "authorization": {"id": "auth-1", "decision": "approved"},
-            "transfer": {"id": "transfer-1", "status": "pending"},
+            "transfer": {
+                "id": "transfer-1",
+                "status": "pending",
+                "account_id": account_id,
+            },
+        }
+
+    def get_transfer(self, transfer_id: str) -> dict[str, object]:
+        return {
+            "id": transfer_id,
+            "status": "pending",
+            "account_id": "account-1",
         }
 
 
@@ -220,6 +231,13 @@ class BankingApiTests(unittest.TestCase):
             self.connector.last_transfer_request[:2],
             ("item-1", "account-1"),
         )
+        status_response = self.client.get(
+            "/banking/transfers/transfer-1",
+            auth=self.auth,
+            params={"account_number": "000123456789"},
+        )
+        self.assertEqual(status_response.status_code, 200)
+        self.assertEqual(status_response.json()["transfer"]["status"], "pending")
 
         not_authorized = self.client.post(
             "/banking/transfers",

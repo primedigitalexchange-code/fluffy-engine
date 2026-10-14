@@ -315,6 +315,42 @@ def create_app(
             )
         return result
 
+    @application.get("/banking/transfers/{transfer_id}")
+    def get_plaid_transfer(
+        transfer_id: str,
+        account_number: str,
+        user_id: str = Depends(_authenticated_user),
+    ) -> dict[str, Any]:
+        account_record = _account_or_404(
+            application.state.store, user_id, account_number
+        )
+        if (
+            account_record.data_source != DataSource.LIVE
+            or not account_record.provider_account_id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Transfer status requires a Plaid-linked live account",
+            )
+        try:
+            transfer = _connector_from_application(application).get_transfer(transfer_id)
+        except ApiUnavailableError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Live banking is not configured",
+            ) from exc
+        except BankingConnectorError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Unable to retrieve transfer status from Plaid",
+            ) from exc
+        if transfer.get("account_id") != account_record.provider_account_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Transfer not found",
+            )
+        return {"transfer": transfer}
+
     @application.get("/accounts/{account_number}/transactions")
     def transactions(
         account_number: str,

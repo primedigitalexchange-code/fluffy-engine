@@ -289,6 +289,18 @@ class BankingConnectorTests(unittest.TestCase):
                 description="Invoice 3",
             )
 
+    def test_get_transfer_returns_provider_transfer(self) -> None:
+        opener = RecordingOpener(
+            [{"transfer": {"id": "transfer-1", "status": "pending"}}]
+        )
+        connector = PlaidConnector(self.config, opener=opener)
+
+        transfer = connector.get_transfer("transfer-1")
+
+        self.assertEqual(transfer["id"], "transfer-1")
+        self.assertEqual(opener.requests[0]["url"], "https://sandbox.plaid.com/transfer/get")
+        self.assertEqual(opener.requests[0]["payload"]["transfer_id"], "transfer-1")
+
     def test_refresh_access_token_replaces_stored_token(self) -> None:
         opener = RecordingOpener([{"new_access_token": "access-sandbox-new", "request_id": "request-2"}])
         token_store = EncryptedTokenStore("unit-test-token-encryption-key")

@@ -134,6 +134,8 @@ The API includes:
   legal name, transfer direction, ACH class, and an idempotency key. Debit and
   credit describe the direction relative to the selected linked account; this is
   not an arbitrary bank-to-bank transfer.
+- `GET /banking/transfers/{transfer_id}?account_number=...` to retrieve the
+  provider status for a transfer on an owned Plaid-linked account.
 - `POST /banking/link-token` to create a Plaid Link token and
   `POST /banking/accounts` to exchange a Link public token and connect its
   accounts. These endpoints require live banking configuration.

@@ -464,6 +464,13 @@ class PlaidConnector:
             "transfer": transfer_response.get("transfer", transfer_response),
         }
 
+    def get_transfer(self, transfer_id: str) -> dict[str, Any]:
+        response = self._request(
+            "/transfer/get",
+            {"transfer_id": _require_string("transfer_id", transfer_id)},
+        )
+        return response.get("transfer", response)
+
     def _request(self, path: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         self._enforce_rate_limit()
         request_body = {
