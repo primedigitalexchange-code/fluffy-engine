@@ -13,6 +13,7 @@ from banking_connector import (
     ConfigurationError,
     EncryptedTokenStore,
     PlaidConnector,
+    TransferDisabledError,
     load_app_credentials_from_env,
 )
 
@@ -189,6 +190,104 @@ class BankingConnectorTests(unittest.TestCase):
             opener.requests[0]["payload"]["options"],
             {"account_ids": ["account-1"]},
         )
+
+    def test_create_transfer_authorizes_then_creates_with_idempotency_key(self) -> None:
+        config = BankingConfig.from_env(
+            {
+                "FLUFFY_ENGINE_BANK_DATA_MODE": "live",
+                "FLUFFY_ENGINE_BANK_PROVIDER": "plaid",
+                "PLAID_CLIENT_ID": "client-id",
+                "PLAID_SECRET": "secret-value",
+                "PLAID_ENV": "sandbox",
+                "BANKING_TOKEN_ENCRYPTION_KEY": "unit-test-token-encryption-key",
+                "PLAID_TRANSFER_ENABLED": "true",
+            }
+        )
+        opener = RecordingOpener(
+            [
+                {"authorization": {"id": "auth-1", "decision": "approved"}},
+                {"transfer": {"id": "transfer-1", "status": "pending"}},
+            ]
+        )
+        token_store = EncryptedTokenStore("unit-test-token-encryption-key")
+        token_store.save_token("item-1", "access-sandbox-secret")
+        connector = PlaidConnector(config, opener=opener, token_store=token_store)
+
+        result = connector.create_transfer(
+            "item-1",
+            "account-1",
+            amount="25.00",
+            transfer_type="debit",
+            ach_class="web",
+            legal_name="Alex Example",
+            idempotency_key="transfer-request-1",
+            description="Invoice 1",
+        )
+
+        self.assertEqual(result["transfer"]["id"], "transfer-1")
+        self.assertEqual(len(opener.requests), 2)
+        authorization_payload = opener.requests[0]["payload"]
+        self.assertEqual(
+            authorization_payload["access_token"], "access-sandbox-secret"
+        )
+        self.assertEqual(authorization_payload["account_id"], "account-1")
+        self.assertEqual(authorization_payload["network"], "ach")
+        self.assertEqual(authorization_payload["user"], {"legal_name": "Alex Example"})
+        self.assertEqual(opener.requests[1]["url"], "https://sandbox.plaid.com/transfer/create")
+        self.assertEqual(opener.requests[1]["payload"]["authorization_id"], "auth-1")
+        self.assertEqual(
+            opener.requests[1]["payload"]["idempotency_key"], "transfer-request-1"
+        )
+
+    def test_create_transfer_does_not_create_when_authorization_is_not_approved(self) -> None:
+        config = BankingConfig.from_env(
+            {
+                "FLUFFY_ENGINE_BANK_DATA_MODE": "live",
+                "FLUFFY_ENGINE_BANK_PROVIDER": "plaid",
+                "PLAID_CLIENT_ID": "client-id",
+                "PLAID_SECRET": "secret-value",
+                "PLAID_ENV": "sandbox",
+                "BANKING_TOKEN_ENCRYPTION_KEY": "unit-test-token-encryption-key",
+                "PLAID_TRANSFER_ENABLED": "true",
+            }
+        )
+        opener = RecordingOpener(
+            [{"authorization": {"id": "auth-1", "decision": "declined"}}]
+        )
+        token_store = EncryptedTokenStore("unit-test-token-encryption-key")
+        token_store.save_token("item-1", "access-sandbox-secret")
+        connector = PlaidConnector(config, opener=opener, token_store=token_store)
+
+        result = connector.create_transfer(
+            "item-1",
+            "account-1",
+            amount="25.00",
+            transfer_type="debit",
+            ach_class="web",
+            legal_name="Alex Example",
+            idempotency_key="transfer-request-2",
+            description="Invoice 2",
+        )
+
+        self.assertIsNone(result["transfer"])
+        self.assertEqual(result["authorization"]["decision"], "declined")
+        self.assertEqual(len(opener.requests), 1)
+
+    def test_create_transfer_is_disabled_by_default(self) -> None:
+        token_store = EncryptedTokenStore("unit-test-token-encryption-key")
+        connector = PlaidConnector(self.config, token_store=token_store)
+
+        with self.assertRaisesRegex(TransferDisabledError, "Plaid Transfer is disabled"):
+            connector.create_transfer(
+                "item-1",
+                "account-1",
+                amount="1.00",
+                transfer_type="debit",
+                ach_class="web",
+                legal_name="Alex Example",
+                idempotency_key="transfer-request-3",
+                description="Invoice 3",
+            )
 
     def test_refresh_access_token_replaces_stored_token(self) -> None:
         opener = RecordingOpener([{"new_access_token": "access-sandbox-new", "request_id": "request-2"}])

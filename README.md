@@ -92,6 +92,18 @@ export BANKING_RATE_LIMIT_PER_MINUTE=30
 export BANKING_LOG_LEVEL=INFO
 ```
 
+Plaid Transfer is a separately approved product and is disabled by default. To
+enable its ACH authorization-and-create flow, explicitly set:
+
+```bash
+export PLAID_TRANSFER_ENABLED=true
+```
+
+Start with `PLAID_ENV=sandbox` and Plaid sandbox credentials that have Transfer
+access. Do not enable this for production until Plaid has approved the account and
+the application has implemented the required user disclosures, authorization
+capture, SEC-class rules, compliance controls, and operational monitoring.
+
 ## Banking API
 
 Install the API dependencies and start the local server:
@@ -116,6 +128,12 @@ The API includes:
   operations.
 - `POST /transfers` to atomically transfer funds between two active mock accounts
   belonging to the authenticated user. Live-account transfers are not supported.
+- `POST /banking/transfers` to request a Plaid ACH authorization and, only when
+  approved, create the provider transfer. This route requires explicit
+  `PLAID_TRANSFER_ENABLED=true`, a Plaid-linked live account, user authorization,
+  legal name, transfer direction, ACH class, and an idempotency key. Debit and
+  credit describe the direction relative to the selected linked account; this is
+  not an arbitrary bank-to-bank transfer.
 - `POST /banking/link-token` to create a Plaid Link token and
   `POST /banking/accounts` to exchange a Link public token and connect its
   accounts. These endpoints require live banking configuration.
@@ -128,6 +146,11 @@ restarts; this is a development API, not a production deployment. Use HTTPS
 before exposing authenticated or financial-data endpoints outside a trusted
 local environment, and add durable storage and managed token encryption before
 production use.
+
+The Plaid transfer route returns provider authorization and transfer results but
+does not update local account balances or persist provider transfer history;
+settlement is asynchronous and must be tracked through provider status/events
+before presenting funds as settled.
 
 If your application also needs its own runtime login separate from Plaid, provide
 it through environment variables instead of hardcoding secrets in the repository:

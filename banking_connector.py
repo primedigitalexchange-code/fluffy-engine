@@ -5,7 +5,7 @@ from collections import deque
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 import logging
@@ -89,6 +89,10 @@ class TokenStorageError(BankingConnectorError):
     """Raised when an encrypted token cannot be loaded or stored."""
 
 
+class TransferDisabledError(BankingConnectorError):
+    """Raised when Plaid Transfer is not explicitly enabled."""
+
+
 @dataclass(frozen=True)
 class BankingConfig:
     mode: str
@@ -100,6 +104,7 @@ class BankingConfig:
     rate_limit_per_minute: int = 30
     timeout_seconds: int = 10
     log_level: str = "INFO"
+    plaid_transfer_enabled: bool = False
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "BankingConfig":
@@ -108,6 +113,10 @@ class BankingConfig:
         provider = source.get("FLUFFY_ENGINE_BANK_PROVIDER", "plaid").strip().lower()
         plaid_environment = source.get("PLAID_ENV", "sandbox").strip().lower()
         token_encryption_key = source.get("BANKING_TOKEN_ENCRYPTION_KEY")
+        transfer_enabled_value = source.get("PLAID_TRANSFER_ENABLED", "false").strip().lower()
+        if transfer_enabled_value not in {"true", "false"}:
+            raise ConfigurationError("PLAID_TRANSFER_ENABLED must be true or false")
+        plaid_transfer_enabled = transfer_enabled_value == "true"
 
         if mode not in {"mock", "live"}:
             raise ConfigurationError("FLUFFY_ENGINE_BANK_DATA_MODE must be mock or live")
@@ -136,6 +145,8 @@ class BankingConfig:
                 raise ConfigurationError(
                     f"Missing required live banking environment variables: {', '.join(missing)}"
                 )
+        elif plaid_transfer_enabled:
+            raise ConfigurationError("Plaid Transfer requires FLUFFY_ENGINE_BANK_DATA_MODE=live")
 
         return cls(
             mode=mode,
@@ -147,6 +158,7 @@ class BankingConfig:
             rate_limit_per_minute=rate_limit_per_minute,
             timeout_seconds=timeout_seconds,
             log_level=log_level,
+            plaid_transfer_enabled=plaid_transfer_enabled,
         )
 
 
@@ -393,6 +405,65 @@ class PlaidConnector:
             for transaction in response.get("transactions", [])
         ]
 
+    def create_transfer(
+        self,
+        item_id: str,
+        account_id: str,
+        *,
+        amount: Decimal | int | str,
+        transfer_type: str,
+        ach_class: str,
+        legal_name: str,
+        idempotency_key: str,
+        description: str,
+    ) -> dict[str, Any]:
+        if not self._config.plaid_transfer_enabled:
+            raise TransferDisabledError(
+                "Plaid Transfer is disabled; set PLAID_TRANSFER_ENABLED=true to enable it"
+            )
+
+        normalized_amount = _normalize_transfer_amount(amount)
+        normalized_type = _require_string("transfer_type", transfer_type).lower()
+        if normalized_type not in {"debit", "credit"}:
+            raise ValueError("transfer_type must be debit or credit")
+        normalized_ach_class = _require_string("ach_class", ach_class).lower()
+        if normalized_ach_class not in {"ccd", "ppd", "tel", "web"}:
+            raise ValueError("ach_class must be ccd, ppd, tel, or web")
+        normalized_description = _require_string("description", description)
+        normalized_idempotency_key = _require_string("idempotency_key", idempotency_key)
+
+        access_token = self._token_store.load_token(item_id)
+        authorization_response = self._request(
+            "/transfer/authorization/create",
+            {
+                "access_token": access_token,
+                "account_id": _require_string("account_id", account_id),
+                "type": normalized_type,
+                "network": "ach",
+                "ach_class": normalized_ach_class,
+                "amount": normalized_amount,
+                "user": {"legal_name": _require_string("legal_name", legal_name)},
+            },
+        )
+        authorization = authorization_response.get("authorization", authorization_response)
+        if authorization.get("decision") != "approved":
+            return {"authorization": authorization, "transfer": None}
+
+        transfer_response = self._request(
+            "/transfer/create",
+            {
+                "authorization_id": _require_string(
+                    "authorization_id", authorization["id"]
+                ),
+                "idempotency_key": normalized_idempotency_key,
+                "description": normalized_description,
+            },
+        )
+        return {
+            "authorization": authorization,
+            "transfer": transfer_response.get("transfer", transfer_response),
+        }
+
     def _request(self, path: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         self._enforce_rate_limit()
         request_body = {
@@ -469,6 +540,24 @@ def _normalize_date(value: date | str) -> date:
     if isinstance(value, date):
         return value
     return date.fromisoformat(_require_string("date", value))
+
+
+def _normalize_transfer_amount(value: Decimal | int | str) -> str:
+    if isinstance(value, float):
+        raise ValueError("transfer amount must be provided as Decimal, int, or string")
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError("transfer amount must be a valid decimal amount") from exc
+    if not amount.is_finite() or amount <= Decimal("0.00"):
+        raise ValueError("transfer amount must be finite and greater than 0")
+    try:
+        quantized_amount = amount.quantize(Decimal("0.01"))
+    except InvalidOperation as exc:
+        raise ValueError("transfer amount is outside the supported range") from exc
+    if quantized_amount != amount:
+        raise ValueError("transfer amount must have no more than 2 decimal places")
+    return f"{quantized_amount:.2f}"
 
 
 def _require_string(field_name: str, value: Any) -> str:

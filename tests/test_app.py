@@ -16,6 +16,7 @@ from banking_connector import (
 class FakeConnector:
     def __init__(self) -> None:
         self.last_transaction_request = None
+        self.last_transfer_request = None
 
     def create_link_token(self, *, user_id: str) -> dict[str, str]:
         return {"link_token": "link-test", "expiration": "2026-10-01T12:00:00Z"}
@@ -56,6 +57,18 @@ class FakeConnector:
                 iso_currency_code="USD",
             )
         ]
+
+    def create_transfer(
+        self,
+        item_id: str,
+        account_id: str,
+        **transfer_request,
+    ) -> dict[str, object]:
+        self.last_transfer_request = (item_id, account_id, transfer_request)
+        return {
+            "authorization": {"id": "auth-1", "decision": "approved"},
+            "transfer": {"id": "transfer-1", "status": "pending"},
+        }
 
 
 class BankingApiTests(unittest.TestCase):
@@ -177,6 +190,55 @@ class BankingApiTests(unittest.TestCase):
             },
         )
         self.assertEqual(live_transfer.status_code, 409)
+
+    def test_plaid_transfer_requires_linked_live_account_and_consent(self) -> None:
+        linked = self.client.post(
+            "/banking/accounts",
+            auth=self.auth,
+            json={"public_token": "public-test"},
+        )
+        self.assertEqual(linked.status_code, 201)
+
+        payload = {
+            "account_number": "000123456789",
+            "amount": "12.34",
+            "transfer_type": "debit",
+            "ach_class": "web",
+            "legal_name": "Alex Example",
+            "idempotency_key": "request-key-1",
+            "description": "Invoice 1",
+            "user_authorized": True,
+        }
+        response = self.client.post(
+            "/banking/transfers",
+            auth=self.auth,
+            json=payload,
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["transfer"]["id"], "transfer-1")
+        self.assertEqual(
+            self.connector.last_transfer_request[:2],
+            ("item-1", "account-1"),
+        )
+
+        not_authorized = self.client.post(
+            "/banking/transfers",
+            auth=self.auth,
+            json={**payload, "user_authorized": False},
+        )
+        self.assertEqual(not_authorized.status_code, 422)
+
+        self.client.post(
+            "/accounts",
+            auth=self.auth,
+            json={"account_number": "mock-account", "account_type": "checking"},
+        )
+        mock_transfer = self.client.post(
+            "/banking/transfers",
+            auth=self.auth,
+            json={**payload, "account_number": "mock-account"},
+        )
+        self.assertEqual(mock_transfer.status_code, 409)
 
     def test_linking_and_live_transaction_history(self) -> None:
         link_token = self.client.post("/banking/link-token", auth=self.auth)

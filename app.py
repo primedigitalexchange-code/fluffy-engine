@@ -7,6 +7,7 @@ from threading import Lock
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field
 
@@ -25,6 +26,7 @@ from banking_connector import (
     BankingConnectorError,
     ConfigurationError,
     PlaidConnector,
+    TransferDisabledError,
     build_banking_connector_from_env,
     load_app_credentials_from_env,
 )
@@ -58,6 +60,17 @@ class TransferRequest(BaseModel):
     source_account_number: str = Field(min_length=1)
     destination_account_number: str = Field(min_length=1)
     amount: Decimal
+
+
+class PlaidTransferRequest(BaseModel):
+    account_number: str = Field(min_length=1)
+    amount: Decimal
+    transfer_type: str = Field(min_length=1)
+    ach_class: str = Field(min_length=1)
+    legal_name: str = Field(min_length=1)
+    idempotency_key: str = Field(min_length=1, max_length=64)
+    description: str = Field(min_length=1, max_length=10)
+    user_authorized: bool
 
 
 class ApiUnavailableError(RuntimeError):
@@ -232,6 +245,75 @@ def create_app(
                 "created_at": transfer.created_at.isoformat(),
             }
         }
+
+    @application.post(
+        "/banking/transfers",
+        status_code=status.HTTP_201_CREATED,
+        response_model=None,
+    )
+    def create_plaid_transfer(
+        payload: PlaidTransferRequest,
+        user_id: str = Depends(_authenticated_user),
+    ) -> dict[str, Any] | JSONResponse:
+        if not payload.user_authorized:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="The user must authorize this transfer before it is submitted",
+            )
+        account_record = _account_or_404(
+            application.state.store, user_id, payload.account_number
+        )
+        if account_record.data_source != DataSource.LIVE:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Plaid transfers require a Plaid-linked live account",
+            )
+        if not account_record.provider_item_id or not account_record.provider_account_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The linked account is missing Plaid account metadata",
+            )
+        try:
+            result = _connector_from_application(application).create_transfer(
+                account_record.provider_item_id,
+                account_record.provider_account_id,
+                amount=payload.amount,
+                transfer_type=payload.transfer_type,
+                ach_class=payload.ach_class,
+                legal_name=payload.legal_name,
+                idempotency_key=payload.idempotency_key,
+                description=payload.description,
+            )
+        except ApiUnavailableError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Live banking is not configured",
+            ) from exc
+        except TransferDisabledError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+        except BankingConnectorError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Unable to authorize or create a transfer with Plaid",
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+
+        if result["transfer"] is None:
+            return JSONResponse(
+                status_code=status.HTTP_409_CONFLICT,
+                content={
+                    "authorization": result["authorization"],
+                    "transfer": None,
+                },
+            )
+        return result
 
     @application.get("/accounts/{account_number}/transactions")
     def transactions(
