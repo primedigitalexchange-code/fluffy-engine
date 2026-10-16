@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fluffy-engine dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 2rem; }
+    button { margin: 0.25rem 0; padding: 0.5rem 0.7rem; }
+    .row { display: flex; gap: 2rem; align-items: flex-start; }
+    ul { padding-left: 1.25rem; }
+    pre { background: #f6f8fa; padding: 1rem; border-radius: 8px; overflow: auto; }
+  </style>
+  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+</head>
+<body>
+  <h1>Live Bank Dashboard (Sandbox)</h1>
+  <p id="welcome"></p>
+  <p><strong>Demo notice:</strong> This app is for Plaid sandbox/dev testing and is not production-hardened.</p>
+  <button id="connect">Connect a bank account</button>
+  <button id="logout">Logout</button>
+  <div class="row">
+    <section>
+      <h2>Accounts</h2>
+      <ul id="accounts"></ul>
+    </section>
+    <section>
+      <h2>Transactions</h2>
+      <pre id="transactions">Select an account</pre>
+    </section>
+  </div>
+  <script>
+    const welcome = document.getElementById("welcome");
+    const accountsEl = document.getElementById("accounts");
+    const txEl = document.getElementById("transactions");
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, { credentials: "include", ...options });
+      if (response.status === 401) {
+        window.location.assign("/");
+        throw new Error("Unauthorized");
+      }
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.detail || `Request failed: ${response.status}`);
+      }
+      return response.json();
+    }
+
+    async function ensureAuthenticated() {
+      const payload = await api("/auth/me");
+      welcome.textContent = `Signed in as ${payload.username}`;
+    }
+
+    async function loadAccounts() {
+      const payload = await api("/bank/accounts");
+      accountsEl.innerHTML = "";
+      if (!payload.accounts.length) {
+        accountsEl.innerHTML = "<li>No accounts linked yet.</li>";
+        return;
+      }
+      for (const account of payload.accounts) {
+        const li = document.createElement("li");
+        const button = document.createElement("button");
+        button.textContent = `${account.bank_name || "Bank"} · ${account.masked_account_number} · ${account.balance} (${account.status})`;
+        button.addEventListener("click", async () => {
+          const tx = await api(`/bank/accounts/${encodeURIComponent(account.account_id)}/transactions`);
+          txEl.textContent = JSON.stringify(tx.transactions, null, 2);
+        });
+        li.appendChild(button);
+        accountsEl.appendChild(li);
+      }
+    }
+
+    async function connectAccount() {
+      const token = await api("/bank/link-token", { method: "POST" });
+      const handler = Plaid.create({
+        token: token.link_token,
+        onSuccess: async (publicToken) => {
+          await api("/bank/exchange-token", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ public_token: publicToken }),
+          });
+          await loadAccounts();
+        },
+      });
+      handler.open();
+    }
+
+    document.getElementById("connect").addEventListener("click", connectAccount);
+    document.getElementById("logout").addEventListener("click", async () => {
+      await api("/auth/logout", { method: "POST" });
+      window.location.assign("/");
+    });
+
+    (async () => {
+      await ensureAuthenticated();
+      await loadAccounts();
+    })();
+  </script>
+</body>
+</html>
