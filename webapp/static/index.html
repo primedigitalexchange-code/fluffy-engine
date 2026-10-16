@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>fluffy-engine bank dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell shell--narrow">
+      <section class="panel">
+        <h1>Bank dashboard demo login</h1>
+        <p class="notice notice--warning">
+          Sandbox/demo only. This app is not production-ready and uses in-memory storage.
+        </p>
+        <p>
+          Sign in with <code>APP_USERNAME</code> and <code>APP_PASSWORD</code>. Plaid Link,
+          not this form, handles bank credentials.
+        </p>
+        <form id="login-form" class="stack" action="/auth/login" method="post">
+          <label>
+            Username
+            <input id="username" name="username" type="text" autocomplete="username" required />
+          </label>
+          <label>
+            Password
+            <input id="password" name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <button type="submit">Sign in</button>
+        </form>
+        <p id="login-error" class="error" role="alert"></p>
+      </section>
+    </main>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>
