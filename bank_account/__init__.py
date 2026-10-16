@@ -1,7 +1,9 @@
 """Public exports for the bank account module."""
 
 from .module import (
+    APIError,
     AccountStatus,
+    AccountStatusChange,
     AccountTransaction,
     BankAccount,
     BankAccountStore,
@@ -10,14 +12,18 @@ from .module import (
     ValidationError,
     create_account_from_live_api,
     create_account_from_mock_data,
+    get_account_audit_history,
     get_account_balance_status,
+    handle_request,
     list_user_accounts,
     retrieve_account,
     update_account,
 )
 
 __all__ = [
+    "APIError",
     "AccountStatus",
+    "AccountStatusChange",
     "AccountTransaction",
     "BankAccount",
     "BankAccountStore",
@@ -26,7 +32,9 @@ __all__ = [
     "ValidationError",
     "create_account_from_live_api",
     "create_account_from_mock_data",
+    "get_account_audit_history",
     "get_account_balance_status",
+    "handle_request",
     "list_user_accounts",
     "retrieve_account",
     "update_account",
