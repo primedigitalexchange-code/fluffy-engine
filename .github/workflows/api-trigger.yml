@@ -1,0 +1,26 @@
+name: API Trigger Workflow
+
+on:
+  push:
+    branches:
+      - '**'
+
+jobs:
+  call-api:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Call API Endpoint
+        run: |
+          curl -X POST https://www.megamartsllc.online/_api/mcp \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: ${{ secrets.API_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.AUTH_TOKEN }}" \
+            -d '{
+              "repository": "${{ github.repository }}",
+              "branch": "${{ github.ref_name }}",
+              "commit": "${{ github.sha }}",
+              "actor": "${{ github.actor }}"
+            }'
