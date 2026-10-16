@@ -87,6 +87,22 @@ class AccountTransaction:
     amount: Decimal
     transaction_type: str
     created_at: datetime
+    payment_id: str | None = None
+    memo: str | None = None
+    counterparty_user_id: str | None = None
+    counterparty_account_number: str | None = None
+
+
+@dataclass(frozen=True)
+class Payment:
+    payment_id: str
+    source_user_id: str
+    source_account_number: str
+    destination_user_id: str
+    destination_account_number: str
+    amount: Decimal
+    memo: str
+    created_at: datetime
 
 
 def _validate_required_string(field_name: str, value: Any) -> str:
@@ -211,6 +227,7 @@ class BankAccountStore:
         self._lock = RLock()
         self._accounts: dict[tuple[str, str], BankAccount] = {}
         self._transactions: dict[tuple[str, str], list[AccountTransaction]] = {}
+        self._payments: dict[str, Payment] = {}
 
     def _get_account_unlocked(self, account_key: tuple[str, str]) -> BankAccount:
         try:
@@ -419,15 +436,125 @@ class BankAccountStore:
             updated_account = replace(account, balance=new_balance)
             self._accounts[account_key] = updated_account
 
-            transaction = AccountTransaction(
-                transaction_id=str(uuid4()),
-                account_number=updated_account.account_number,
-                amount=amount_decimal,
-                transaction_type=transaction_type,
-                created_at=datetime.now(timezone.utc),
+            return self._append_transaction_unlocked(
+                account_key,
+                updated_account,
+                amount_decimal,
+                transaction_type,
             )
-            self._transactions[account_key].append(transaction)
-            return transaction
+
+    def _append_transaction_unlocked(
+        self,
+        account_key: tuple[str, str],
+        account: BankAccount,
+        amount: Decimal,
+        transaction_type: str,
+        *,
+        created_at: datetime | None = None,
+        payment_id: str | None = None,
+        memo: str | None = None,
+        counterparty_user_id: str | None = None,
+        counterparty_account_number: str | None = None,
+    ) -> AccountTransaction:
+        transaction = AccountTransaction(
+            transaction_id=str(uuid4()),
+            account_number=account.account_number,
+            amount=amount,
+            transaction_type=transaction_type,
+            created_at=created_at or datetime.now(timezone.utc),
+            payment_id=payment_id,
+            memo=memo,
+            counterparty_user_id=counterparty_user_id,
+            counterparty_account_number=counterparty_account_number,
+        )
+        self._transactions[account_key].append(transaction)
+        return transaction
+
+    def make_payment(
+        self,
+        *,
+        source_user_id: str,
+        source_account_number: str,
+        destination_user_id: str,
+        destination_account_number: str,
+        amount: Decimal | int | str,
+        memo: str,
+    ) -> Payment:
+        source_key = (
+            _validate_required_string("source_user_id", source_user_id),
+            _validate_required_string("source_account_number", source_account_number),
+        )
+        destination_key = (
+            _validate_required_string("destination_user_id", destination_user_id),
+            _validate_required_string("destination_account_number", destination_account_number),
+        )
+        if source_key == destination_key:
+            raise ValidationError("source and destination accounts must differ")
+
+        amount_decimal = _validate_balance(amount)
+        if amount_decimal == Decimal("0.00"):
+            raise ValidationError("payment amount must be greater than 0")
+        memo = _validate_required_string("memo", memo)
+
+        with self._lock:
+            source_account = self._get_account_unlocked(source_key)
+            destination_account = self._get_account_unlocked(destination_key)
+
+            if source_account.status != AccountStatus.ACTIVE:
+                raise ValidationError("source account must be active to process payments")
+            if destination_account.status != AccountStatus.ACTIVE:
+                raise ValidationError("destination account must be active to process payments")
+
+            new_source_balance = source_account.balance - amount_decimal
+            if new_source_balance < Decimal("0.00"):
+                raise ValidationError("insufficient funds")
+
+            created_at = datetime.now(timezone.utc)
+            payment_id = str(uuid4())
+            updated_source_account = replace(source_account, balance=new_source_balance)
+            updated_destination_account = replace(
+                destination_account,
+                balance=destination_account.balance + amount_decimal,
+            )
+
+            self._accounts[source_key] = updated_source_account
+            self._accounts[destination_key] = updated_destination_account
+
+            payment = Payment(
+                payment_id=payment_id,
+                source_user_id=updated_source_account.user_id,
+                source_account_number=updated_source_account.account_number,
+                destination_user_id=updated_destination_account.user_id,
+                destination_account_number=updated_destination_account.account_number,
+                amount=amount_decimal,
+                memo=memo,
+                created_at=created_at,
+            )
+            self._payments[payment_id] = payment
+
+            self._append_transaction_unlocked(
+                source_key,
+                updated_source_account,
+                amount_decimal,
+                "payment_debit",
+                created_at=created_at,
+                payment_id=payment.payment_id,
+                memo=payment.memo,
+                counterparty_user_id=payment.destination_user_id,
+                counterparty_account_number=payment.destination_account_number,
+            )
+            self._append_transaction_unlocked(
+                destination_key,
+                updated_destination_account,
+                amount_decimal,
+                "payment_credit",
+                created_at=created_at,
+                payment_id=payment.payment_id,
+                memo=payment.memo,
+                counterparty_user_id=payment.source_user_id,
+                counterparty_account_number=payment.source_account_number,
+            )
+            return payment
 
     def list_transactions(self, user_id: str, account_number: str) -> list[AccountTransaction]:
         account_key = (
